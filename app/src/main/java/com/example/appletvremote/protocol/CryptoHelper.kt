@@ -15,9 +15,10 @@ import javax.crypto.spec.SecretKeySpec
 object CryptoHelper {
 
     init {
-        if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
-            Security.addProvider(BouncyCastleProvider())
-        }
+        // Android ships a stripped-down BouncyCastle. Remove it and insert the full one
+        // so ChaCha20-Poly1305 and other algorithms are available.
+        Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
+        Security.insertProviderAt(BouncyCastleProvider(), 1)
     }
 
     // --- Ed25519 ---

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- TV shape -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,35 L78,35 Q82,35 82,39 L82,65 Q82,69 78,69 L30,69 Q26,69 26,65 L26,39 Q26,35 30,35 Z" />
+    <!-- Screen -->
+    <path
+        android:fillColor="#1A1A2E"
+        android:pathData="M32,38 L76,38 Q78,38 78,40 L78,63 Q78,65 76,65 L32,65 Q30,65 30,63 L30,40 Q30,38 32,38 Z" />
+    <!-- Stand -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,69 L64,69 L60,75 L48,75 Z" />
+    <!-- Play button on screen -->
+    <path
+        android:fillColor="#64B5F6"
+        android:pathData="M49,46 L61,52 L49,58 Z" />
+</vector>

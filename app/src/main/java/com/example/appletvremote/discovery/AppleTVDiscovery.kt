@@ -12,21 +12,35 @@ import kotlinx.coroutines.flow.StateFlow
  * Discovers Apple TV devices on the local network using mDNS/NSD.
  * Looks for _mediaremotetv._tcp services (MRP protocol).
  */
-class AppleTVDiscovery(context: Context) {
+class AppleTVDiscovery(private val context: Context) {
     companion object {
         private const val TAG = "AppleTVDiscovery"
         private const val SERVICE_TYPE = "_mediaremotetv._tcp."
     }
 
-    private val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private var nsdManager: NsdManager? = null
     private val _devices = MutableStateFlow<List<AppleTVDevice>>(emptyList())
     val devices: StateFlow<List<AppleTVDevice>> = _devices
     private val deviceMap = mutableMapOf<String, AppleTVDevice>()
     private var isDiscovering = false
     private var listener: NsdManager.DiscoveryListener? = null
 
+    private fun getNsdManager(): NsdManager? {
+        if (nsdManager == null) {
+            nsdManager = context.getSystemService(Context.NSD_SERVICE) as? NsdManager
+        }
+        return nsdManager
+    }
+
     fun startDiscovery() {
         if (isDiscovering) return
+
+        val mgr = getNsdManager()
+        if (mgr == null) {
+            Log.e(TAG, "NsdManager not available")
+            return
+        }
+
         deviceMap.clear()
         _devices.value = emptyList()
 
@@ -38,27 +52,39 @@ class AppleTVDiscovery(context: Context) {
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                 Log.d(TAG, "Service found: ${serviceInfo.serviceName}")
-                nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
-                    override fun onResolveFailed(si: NsdServiceInfo, errorCode: Int) {
-                        Log.e(TAG, "Resolve failed for ${si.serviceName}: error $errorCode")
-                    }
-
-                    override fun onServiceResolved(si: NsdServiceInfo) {
-                        val host = si.host?.hostAddress ?: return
-                        val port = si.port
-                        val name = si.serviceName
-                        val uniqueId = si.attributes["UniqueIdentifier"]?.let { String(it) }
-                            ?: si.attributes["MACAddress"]?.let { String(it) }
-                            ?: "$host:$port"
-
-                        Log.d(TAG, "Resolved: $name at $host:$port (id=$uniqueId)")
-                        val device = AppleTVDevice(name, host, port, uniqueId)
-                        synchronized(deviceMap) {
-                            deviceMap[uniqueId] = device
-                            _devices.value = deviceMap.values.toList()
+                try {
+                    mgr.resolveService(serviceInfo, object : NsdManager.ResolveListener {
+                        override fun onResolveFailed(si: NsdServiceInfo, errorCode: Int) {
+                            Log.e(TAG, "Resolve failed for ${si.serviceName}: error $errorCode")
                         }
-                    }
-                })
+
+                        override fun onServiceResolved(si: NsdServiceInfo) {
+                            try {
+                                val host = si.host?.hostAddress ?: return
+                                val port = si.port
+                                val name = si.serviceName
+                                val uniqueId = try {
+                                    si.attributes["UniqueIdentifier"]?.let { String(it) }
+                                        ?: si.attributes["MACAddress"]?.let { String(it) }
+                                        ?: "$host:$port"
+                                } catch (_: Exception) {
+                                    "$host:$port"
+                                }
+
+                                Log.d(TAG, "Resolved: $name at $host:$port (id=$uniqueId)")
+                                val device = AppleTVDevice(name, host, port, uniqueId)
+                                synchronized(deviceMap) {
+                                    deviceMap[uniqueId] = device
+                                    _devices.value = deviceMap.values.toList()
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error processing resolved service: ${e.message}")
+                            }
+                        }
+                    })
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error resolving service: ${e.message}")
+                }
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
@@ -85,7 +111,7 @@ class AppleTVDiscovery(context: Context) {
         }
 
         try {
-            nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
+            mgr.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start discovery: ${e.message}")
         }
@@ -94,7 +120,8 @@ class AppleTVDiscovery(context: Context) {
     fun stopDiscovery() {
         if (!isDiscovering) return
         try {
-            listener?.let { nsdManager.stopServiceDiscovery(it) }
+            val mgr = nsdManager ?: return
+            listener?.let { mgr.stopServiceDiscovery(it) }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to stop discovery: ${e.message}")
         }

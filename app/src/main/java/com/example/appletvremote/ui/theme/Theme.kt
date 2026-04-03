@@ -1,5 +1,6 @@
 package com.example.appletvremote.ui.theme
 
+import android.content.Context
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
@@ -28,19 +29,23 @@ private val LightColorScheme = lightColorScheme(
     surfaceVariant = Color(0xFFE8E8E8),
 )
 
+private fun getDynamicColorScheme(context: Context, dark: Boolean): ColorScheme? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+    return try {
+        if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    } catch (_: Exception) {
+        null
+    }
+}
+
 @Composable
 fun AppleTVRemoteTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
+    val context = LocalContext.current
+    val colorScheme = getDynamicColorScheme(context, darkTheme)
+        ?: if (darkTheme) DarkColorScheme else LightColorScheme
 
     MaterialTheme(
         colorScheme = colorScheme,

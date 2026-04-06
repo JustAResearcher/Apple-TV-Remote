@@ -26,6 +26,10 @@ fun DiscoveryScreen(
     onStartDiscovery: () -> Unit,
     onSelectDevice: (AppleTVDevice) -> Unit
 ) {
+    LaunchedEffect(Unit) {
+        onStartDiscovery()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(

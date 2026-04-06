@@ -1,5 +1,6 @@
 package com.example.appletvremote.protocol
 
+import android.util.Log
 import org.bouncycastle.crypto.agreement.X25519Agreement
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator
@@ -14,11 +15,22 @@ import javax.crypto.spec.SecretKeySpec
 
 object CryptoHelper {
 
-    init {
-        // Android ships a stripped-down BouncyCastle. Remove it and insert the full one
-        // so ChaCha20-Poly1305 and other algorithms are available.
-        Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
-        Security.insertProviderAt(BouncyCastleProvider(), 1)
+    private var initialized = false
+
+    /**
+     * Initialize BouncyCastle provider on demand, not at class load time.
+     * Must be called before any JCE crypto operations (ChaCha20-Poly1305).
+     */
+    fun ensureInitialized() {
+        if (initialized) return
+        initialized = true
+        try {
+            Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
+            Security.insertProviderAt(BouncyCastleProvider(), 1)
+            Log.d("CryptoHelper", "BouncyCastle provider installed")
+        } catch (e: Exception) {
+            Log.e("CryptoHelper", "Failed to install BouncyCastle: ${e.message}", e)
+        }
     }
 
     // --- Ed25519 ---
@@ -82,6 +94,7 @@ object CryptoHelper {
     // --- ChaCha20-Poly1305 ---
 
     fun chaCha20Poly1305Encrypt(key: ByteArray, nonce: ByteArray, plaintext: ByteArray, aad: ByteArray? = null): ByteArray {
+        ensureInitialized()
         val cipher = Cipher.getInstance("ChaCha20-Poly1305", "BC")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "ChaCha20"), IvParameterSpec(nonce))
         if (aad != null) cipher.updateAAD(aad)
@@ -89,18 +102,15 @@ object CryptoHelper {
     }
 
     fun chaCha20Poly1305Decrypt(key: ByteArray, nonce: ByteArray, ciphertext: ByteArray, aad: ByteArray? = null): ByteArray {
+        ensureInitialized()
         val cipher = Cipher.getInstance("ChaCha20-Poly1305", "BC")
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "ChaCha20"), IvParameterSpec(nonce))
         if (aad != null) cipher.updateAAD(aad)
         return cipher.doFinal(ciphertext)
     }
 
-    /**
-     * Build a 12-byte nonce from an 8-byte little-endian counter.
-     */
     fun buildNonce(counter: Long): ByteArray {
         val nonce = ByteArray(12)
-        // First 4 bytes are zeros, last 8 bytes are the counter in little-endian
         for (i in 0..7) {
             nonce[4 + i] = ((counter shr (i * 8)) and 0xFF).toByte()
         }
@@ -108,10 +118,6 @@ object CryptoHelper {
     }
 }
 
-/**
- * Handles encrypted message framing for MRP after pair-verify completes.
- * Each encrypted frame: 2-byte LE length (AAD) + encrypted data + 16-byte auth tag
- */
 class MrpCipher(private val readKey: ByteArray, private val writeKey: ByteArray) {
     private var readCounter: Long = 0
     private var writeCounter: Long = 0
@@ -121,7 +127,6 @@ class MrpCipher(private val readKey: ByteArray, private val writeKey: ByteArray)
         val aad = ByteArray(2)
         aad[0] = (data.size and 0xFF).toByte()
         aad[1] = ((data.size shr 8) and 0xFF).toByte()
-
         val encrypted = CryptoHelper.chaCha20Poly1305Encrypt(writeKey, nonce, data, aad)
         return aad + encrypted
     }
@@ -130,13 +135,8 @@ class MrpCipher(private val readKey: ByteArray, private val writeKey: ByteArray)
         val nonce = CryptoHelper.buildNonce(readCounter++)
         val aad = data.copyOfRange(0, 2)
         val length = (aad[0].toInt() and 0xFF) or ((aad[1].toInt() and 0xFF) shl 8)
-        val ciphertext = data.copyOfRange(2, 2 + length + 16) // ciphertext + tag
-
+        val ciphertext = data.copyOfRange(2, 2 + length + 16)
         return CryptoHelper.chaCha20Poly1305Decrypt(readKey, nonce, ciphertext, aad)
-    }
-
-    fun expectedEncryptedLength(data: ByteArray): Int {
-        return 2 + data.size + 16
     }
 
     fun decryptedLength(header: ByteArray): Int {

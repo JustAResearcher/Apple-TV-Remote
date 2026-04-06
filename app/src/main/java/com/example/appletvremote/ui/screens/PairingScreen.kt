@@ -85,7 +85,10 @@ fun PairingScreen(
                     Text("Submit PIN")
                 }
             } else {
-                CircularProgressIndicator()
+                Text(
+                    "\u23F3",
+                    style = MaterialTheme.typography.displayLarge,
+                )
                 Spacer(modifier = Modifier.height(24.dp))
                 Text(
                     text = statusMessage,

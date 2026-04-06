@@ -50,8 +50,12 @@ fun DiscoveryScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (connectionState == ConnectionState.DISCOVERING) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Scanning...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
             }
 
             if (statusMessage.isNotEmpty()) {
@@ -65,7 +69,10 @@ fun DiscoveryScreen(
 
             if (devices.isEmpty() && connectionState == ConnectionState.DISCOVERING) {
                 Spacer(modifier = Modifier.height(48.dp))
-                CircularProgressIndicator()
+                Text(
+                    "\u23F3",
+                    style = MaterialTheme.typography.displayLarge,
+                )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     "Looking for Apple TVs on your network...",

@@ -3,6 +3,7 @@ package com.example.appletvremote.discovery
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.util.Log
 import com.example.appletvremote.model.AppleTVDevice
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -11,6 +12,9 @@ import kotlinx.coroutines.flow.StateFlow
 /**
  * Discovers Apple TV devices on the local network using mDNS/NSD.
  * Looks for _mediaremotetv._tcp services (MRP protocol).
+ *
+ * Requires a WiFi multicast lock — Android suppresses multicast by default
+ * to save battery, which prevents mDNS from receiving responses.
  */
 class AppleTVDiscovery(private val context: Context) {
     companion object {
@@ -19,6 +23,7 @@ class AppleTVDiscovery(private val context: Context) {
     }
 
     private var nsdManager: NsdManager? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
     private val _devices = MutableStateFlow<List<AppleTVDevice>>(emptyList())
     val devices: StateFlow<List<AppleTVDevice>> = _devices
     private val deviceMap = mutableMapOf<String, AppleTVDevice>()
@@ -32,6 +37,33 @@ class AppleTVDiscovery(private val context: Context) {
         return nsdManager
     }
 
+    private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) return
+        try {
+            val wifiManager = context.applicationContext
+                .getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            multicastLock = wifiManager?.createMulticastLock("atvremote_mdns")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            Log.d(TAG, "Multicast lock acquired")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to acquire multicast lock: ${e.message}")
+        }
+    }
+
+    private fun releaseMulticastLock() {
+        try {
+            if (multicastLock?.isHeld == true) {
+                multicastLock?.release()
+                Log.d(TAG, "Multicast lock released")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to release multicast lock: ${e.message}")
+        }
+        multicastLock = null
+    }
+
     fun startDiscovery() {
         if (isDiscovering) return
 
@@ -40,6 +72,9 @@ class AppleTVDiscovery(private val context: Context) {
             Log.e(TAG, "NsdManager not available")
             return
         }
+
+        // Must acquire multicast lock BEFORE starting discovery
+        acquireMulticastLock()
 
         deviceMap.clear()
         _devices.value = emptyList()
@@ -114,6 +149,7 @@ class AppleTVDiscovery(private val context: Context) {
             mgr.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start discovery: ${e.message}")
+            releaseMulticastLock()
         }
     }
 
@@ -126,5 +162,6 @@ class AppleTVDiscovery(private val context: Context) {
             Log.e(TAG, "Failed to stop discovery: ${e.message}")
         }
         isDiscovering = false
+        releaseMulticastLock()
     }
 }

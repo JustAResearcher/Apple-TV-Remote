@@ -19,7 +19,8 @@ import kotlinx.coroutines.flow.StateFlow
 class AppleTVDiscovery(private val context: Context) {
     companion object {
         private const val TAG = "AppleTVDiscovery"
-        private const val SERVICE_TYPE = "_mediaremotetv._tcp."
+        // No trailing dot — Android NSD appends ".local." automatically
+        private const val SERVICE_TYPE = "_mediaremotetv._tcp"
     }
 
     private var nsdManager: NsdManager? = null

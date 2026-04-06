@@ -58,6 +58,20 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         connectToDevice(device)
     }
 
+    fun connectManual(ip: String) {
+        val host = ip.trim()
+        if (host.isEmpty()) return
+        discovery.stopDiscovery()
+        val device = AppleTVDevice(
+            name = "Apple TV ($host)",
+            host = host,
+            port = 49152, // Default MRP port
+            uniqueId = host
+        )
+        _selectedDevice.value = device
+        connectToDevice(device)
+    }
+
     private fun connectToDevice(device: AppleTVDevice) {
         viewModelScope.launch {
             try {

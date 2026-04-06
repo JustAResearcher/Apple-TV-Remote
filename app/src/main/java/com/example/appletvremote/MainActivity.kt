@@ -48,7 +48,8 @@ fun RemoteApp(viewModel: RemoteViewModel = viewModel()) {
                 connectionState = connectionState,
                 statusMessage = statusMessage,
                 onStartDiscovery = { viewModel.startDiscovery() },
-                onSelectDevice = { viewModel.selectDevice(it) }
+                onSelectDevice = { viewModel.selectDevice(it) },
+                onConnectManual = { viewModel.connectManual(it) }
             )
         }
 

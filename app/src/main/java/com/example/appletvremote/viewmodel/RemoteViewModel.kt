@@ -13,10 +13,14 @@ import com.example.appletvremote.storage.CredentialStore
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.net.InetSocketAddress
+import java.net.Socket
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val TAG = "RemoteViewModel"
+        // Apple TV MRP commonly listens on these ports
+        private val MRP_PORTS = listOf(49152, 49153, 49154, 49155, 49156, 32498)
     }
 
     val discovery = AppleTVDiscovery(application)
@@ -34,6 +38,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private val _needsPin = MutableStateFlow(false)
     val needsPin: StateFlow<Boolean> = _needsPin
 
+    // Error that persists on the discovery screen
+    private val _lastError = MutableStateFlow("")
+    val lastError: StateFlow<String> = _lastError
+
     private var connection: MrpConnection? = null
     private var pairing: MrpPairing? = null
     private var pairingSalt: ByteArray? = null
@@ -42,6 +50,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun startDiscovery() {
         _connectionState.value = ConnectionState.DISCOVERING
         _statusMessage.value = "Searching for Apple TV..."
+        _lastError.value = ""
         discovery.startDiscovery()
     }
 
@@ -55,8 +64,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun selectDevice(device: AppleTVDevice) {
         Log.d(TAG, "selectDevice: ${device.name} at ${device.host}:${device.port}")
         _selectedDevice.value = device
-        // Don't wait for discovery to stop — it's async now
+        _lastError.value = ""
         discovery.stopDiscovery()
+        // Change state BEFORE launching coroutine for immediate UI feedback
+        _connectionState.value = ConnectionState.CONNECTING
+        _statusMessage.value = "Connecting to ${device.name}..."
         connectToDevice(device)
     }
 
@@ -67,29 +79,41 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val device = AppleTVDevice(
             name = "Apple TV ($host)",
             host = host,
-            port = 49152, // Default MRP port
+            port = 49152,
             uniqueId = host
         )
         _selectedDevice.value = device
+        _lastError.value = ""
+        _connectionState.value = ConnectionState.CONNECTING
+        _statusMessage.value = "Connecting to $host..."
         connectToDevice(device)
     }
 
     private fun connectToDevice(device: AppleTVDevice) {
         viewModelScope.launch {
             try {
-                _connectionState.value = ConnectionState.CONNECTING
-                _statusMessage.value = "Connecting to ${device.name}..."
+                // Try the discovered port first, then scan common MRP ports
+                val port = findWorkingPort(device.host, device.port)
+                if (port == null) {
+                    Log.e(TAG, "No open MRP port found on ${device.host}")
+                    _lastError.value = "Could not connect to ${device.name} — no open port found on ${device.host}. Tried ports: ${device.port}, ${MRP_PORTS.joinToString()}"
+                    _statusMessage.value = ""
+                    _connectionState.value = ConnectionState.DISCONNECTED
+                    return@launch
+                }
+
+                _statusMessage.value = "Connected on port $port, starting pairing..."
+                Log.d(TAG, "Found open port $port on ${device.host}")
 
                 val conn = MrpConnection()
-                conn.connect(device.host, device.port)
+                conn.connect(device.host, port)
                 connection = conn
 
                 // Check if we have stored credentials for this device
                 val creds = credentialStore.load(device.uniqueId)
                 if (creds != null) {
-                    // Try pair-verify with existing credentials
                     _connectionState.value = ConnectionState.PAIR_VERIFY
-                    _statusMessage.value = "Verifying pairing..."
+                    _statusMessage.value = "Verifying existing pairing..."
                     try {
                         val mrpPairing = MrpPairing(conn)
                         val cipher = mrpPairing.pairVerify(creds)
@@ -100,10 +124,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     } catch (e: Exception) {
                         Log.w(TAG, "Pair-verify failed, need to re-pair: ${e.message}")
                         credentialStore.delete(device.uniqueId)
-                        // Reconnect since the failed pair-verify may have disrupted the connection
                         conn.disconnect()
                         val newConn = MrpConnection()
-                        newConn.connect(device.host, device.port)
+                        newConn.connect(device.host, port)
                         connection = newConn
                     }
                 }
@@ -112,10 +135,35 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 startPairing()
             } catch (e: Exception) {
                 Log.e(TAG, "Connection failed: ${e.message}", e)
-                _statusMessage.value = "Connection failed: ${e.message}"
+                _lastError.value = "Connection failed: ${e.message}"
+                _statusMessage.value = ""
                 _connectionState.value = ConnectionState.DISCONNECTED
             }
         }
+    }
+
+    /**
+     * Try to find an open MRP port on the Apple TV.
+     * First tries the port from mDNS, then scans common MRP ports.
+     */
+    private suspend fun findWorkingPort(host: String, discoveredPort: Int): Int? = withContext(Dispatchers.IO) {
+        // Build list: discovered port first, then fallbacks (deduplicated)
+        val portsToTry = (listOf(discoveredPort) + MRP_PORTS).distinct()
+
+        for (port in portsToTry) {
+            try {
+                _statusMessage.value = "Trying $host:$port..."
+                Log.d(TAG, "Trying port $port on $host")
+                val sock = Socket()
+                sock.connect(InetSocketAddress(host, port), 2000)
+                sock.close()
+                Log.d(TAG, "Port $port is open on $host")
+                return@withContext port
+            } catch (e: Exception) {
+                Log.d(TAG, "Port $port closed/timeout on $host: ${e.message}")
+            }
+        }
+        null
     }
 
     private suspend fun startPairing() {
@@ -127,10 +175,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             val mrpPairing = MrpPairing(conn)
             pairing = mrpPairing
 
-            // M1: Start pairing
             mrpPairing.pairSetupM1()
 
-            // M2: Get challenge (Apple TV shows PIN on screen)
             val (salt, serverPubKey) = mrpPairing.pairSetupM2()
             pairingSalt = salt
             pairingServerPubKey = serverPubKey
@@ -139,7 +185,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             _statusMessage.value = "Enter the PIN shown on your Apple TV"
         } catch (e: Exception) {
             Log.e(TAG, "Pairing start failed: ${e.message}", e)
-            _statusMessage.value = "Pairing failed: ${e.message}"
+            _lastError.value = "Pairing failed: ${e.message}"
+            _statusMessage.value = ""
             _connectionState.value = ConnectionState.DISCONNECTED
         }
     }
@@ -154,26 +201,18 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
                 _statusMessage.value = "Verifying PIN..."
 
-                // M3: Send proof with PIN
                 mrpPairing.pairSetupM3(pin, salt, serverPubKey)
-
-                // M4: Verify server proof
                 mrpPairing.pairSetupM4()
-
-                // M5: Send encrypted credentials
                 mrpPairing.pairSetupM5()
 
-                // M6: Receive server credentials
                 val device = _selectedDevice.value!!
                 var creds = mrpPairing.pairSetupM6()
                 creds = creds.copy(deviceId = device.uniqueId)
 
-                // Save credentials
                 credentialStore.save(creds)
 
                 _statusMessage.value = "Pairing successful! Establishing encrypted connection..."
 
-                // Now do pair-verify to establish encrypted session
                 connection?.disconnect()
                 val newConn = MrpConnection()
                 newConn.connect(device.host, device.port)
@@ -187,7 +226,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 _statusMessage.value = "Connected to ${device.name}"
             } catch (e: Exception) {
                 Log.e(TAG, "Pairing failed: ${e.message}", e)
-                _statusMessage.value = "Pairing failed: ${e.message}"
+                _lastError.value = "Pairing failed: ${e.message}"
+                _statusMessage.value = ""
                 _connectionState.value = ConnectionState.DISCONNECTED
             }
         }
@@ -199,16 +239,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             try {
-                // Send button down
                 val downMsg = ProtobufHelper.buildSendHIDEventMessage(
                     button.usagePage, button.usage, true
                 )
                 conn.sendMessage(downMsg)
-
-                // Small delay between down and up
                 delay(50)
-
-                // Send button up
                 val upMsg = ProtobufHelper.buildSendHIDEventMessage(
                     button.usagePage, button.usage, false
                 )

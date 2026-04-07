@@ -27,6 +27,7 @@ fun DiscoveryScreen(
     devices: List<AppleTVDevice>,
     connectionState: ConnectionState,
     statusMessage: String,
+    lastError: String,
     onStartDiscovery: () -> Unit,
     onSelectDevice: (AppleTVDevice) -> Unit,
     onConnectManual: (String) -> Unit
@@ -105,6 +106,23 @@ fun DiscoveryScreen(
             Spacer(modifier = Modifier.height(16.dp))
             Divider()
             Spacer(modifier = Modifier.height(16.dp))
+
+            if (lastError.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        text = lastError,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             if (connectionState == ConnectionState.DISCOVERING) {
                 Text(

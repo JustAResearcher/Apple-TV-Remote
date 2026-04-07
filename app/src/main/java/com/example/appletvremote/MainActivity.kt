@@ -39,6 +39,7 @@ fun RemoteApp(viewModel: RemoteViewModel = viewModel()) {
     val devices by viewModel.discovery.devices.collectAsState()
     val selectedDevice by viewModel.selectedDevice.collectAsState()
     val needsPin by viewModel.needsPin.collectAsState()
+    val lastError by viewModel.lastError.collectAsState()
 
     when (connectionState) {
         ConnectionState.DISCONNECTED,
@@ -47,6 +48,7 @@ fun RemoteApp(viewModel: RemoteViewModel = viewModel()) {
                 devices = devices,
                 connectionState = connectionState,
                 statusMessage = statusMessage,
+                lastError = lastError,
                 onStartDiscovery = { viewModel.startDiscovery() },
                 onSelectDevice = { viewModel.selectDevice(it) },
                 onConnectManual = { viewModel.connectManual(it) }

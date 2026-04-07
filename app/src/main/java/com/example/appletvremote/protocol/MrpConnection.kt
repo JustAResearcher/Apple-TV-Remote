@@ -96,32 +96,20 @@ class MrpConnection {
     }
 
     /**
-     * Send a protobuf-encoded ProtocolMessage with 4-byte big-endian length framing.
+     * Send a protobuf-encoded ProtocolMessage.
+     * Over TLS (before pair-verify): varint length + protobuf
+     * After pair-verify: ChaCha20 encrypted frames
      */
     suspend fun sendMessage(protobufData: ByteArray) = withContext(Dispatchers.IO) {
         val os = outputStream ?: throw IllegalStateException("Not connected")
 
         val encCipher = cipher
         if (encCipher != null) {
-            // Encrypted: build inner frame (4-byte header + protobuf), then encrypt
-            val header = ByteArray(4)
-            val length = protobufData.size
-            header[0] = ((length shr 24) and 0xFF).toByte()
-            header[1] = ((length shr 16) and 0xFF).toByte()
-            header[2] = ((length shr 8) and 0xFF).toByte()
-            header[3] = (length and 0xFF).toByte()
-            val innerFrame = header + protobufData
-            val encrypted = encCipher.encrypt(innerFrame)
+            val encrypted = encCipher.encrypt(protobufData)
             os.write(encrypted)
         } else {
-            // Unencrypted: 4-byte big-endian length + protobuf payload
-            val header = ByteArray(4)
-            val length = protobufData.size
-            header[0] = ((length shr 24) and 0xFF).toByte()
-            header[1] = ((length shr 16) and 0xFF).toByte()
-            header[2] = ((length shr 8) and 0xFF).toByte()
-            header[3] = (length and 0xFF).toByte()
-            os.write(header)
+            // Varint length prefix + protobuf payload
+            os.write(encodeVarint(protobufData.size))
             os.write(protobufData)
         }
         os.flush()
@@ -141,27 +129,41 @@ class MrpConnection {
             val payloadLength = encCipher.decryptedLength(header)
             // Read encrypted payload + 16-byte auth tag
             val encrypted = readExact(ins, payloadLength + 16)
-            val decrypted = encCipher.decrypt(header + encrypted)
-            // Decrypted contains: 4-byte header + protobuf
-            if (decrypted.size > 4) {
-                decrypted.copyOfRange(4, decrypted.size)
-            } else {
-                ByteArray(0)
-            }
+            encCipher.decrypt(header + encrypted)
         } else {
-            // Read 4-byte big-endian length header
-            val header = readExact(ins, 4)
-            val length = ((header[0].toInt() and 0xFF) shl 24) or
-                    ((header[1].toInt() and 0xFF) shl 16) or
-                    ((header[2].toInt() and 0xFF) shl 8) or
-                    (header[3].toInt() and 0xFF)
-
+            // Read varint length prefix
+            val length = readVarint(ins)
             if (length <= 0 || length > 1_000_000) {
                 throw IllegalStateException("Invalid message length: $length")
             }
             Log.d(TAG, "Receiving message: $length bytes")
-            readExact(ins, length)
+            readExact(ins, length.toInt())
         }
+    }
+
+    private fun encodeVarint(value: Int): ByteArray {
+        val result = mutableListOf<Byte>()
+        var v = value
+        while (v > 0x7F) {
+            result.add(((v and 0x7F) or 0x80).toByte())
+            v = v ushr 7
+        }
+        result.add((v and 0x7F).toByte())
+        return result.toByteArray()
+    }
+
+    private fun readVarint(input: InputStream): Long {
+        var result = 0L
+        var shift = 0
+        while (true) {
+            val b = input.read()
+            if (b < 0) throw java.io.IOException("Connection closed while reading varint")
+            result = result or ((b.toLong() and 0x7F) shl shift)
+            if (b and 0x80 == 0) break
+            shift += 7
+            if (shift > 35) throw IllegalStateException("Varint too long")
+        }
+        return result
     }
 
     private fun readExact(input: InputStream, length: Int): ByteArray {

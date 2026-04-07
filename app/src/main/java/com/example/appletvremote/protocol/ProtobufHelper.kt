@@ -87,24 +87,31 @@ object ProtobufHelper {
     }
 
     /**
-     * Build a DeviceInfoMessage.
-     * DeviceInfoMessage fields:
+     * Build a DeviceInfoMessage matching the format used by the official Apple TV Remote app.
+     * DeviceInfoMessage fields (from node-appletv / pyatv):
      *   1 = uniqueIdentifier (string)
      *   2 = name (string)
-     *   3 = localizedModelName (string, optional)
-     *   4 = systemBuildVersion (string, optional)
-     *   5 = applicationBundleIdentifier (string, optional)
-     *   6 = protocolVersion (varint, optional)
-     *   9 = systemMediaApplication (string, optional)
+     *   3 = localizedModelName (string)
+     *   4 = systemBuildVersion (string)
+     *   5 = applicationBundleIdentifier (string)
+     *   6 = protocolVersion (varint)
+     *   7 = applicationBundleVersion (string)
+     *   8 = lastSupportedMessageType (varint)
+     *   9 = supportsSystemPairing (varint/bool)
+     *   10 = allowsPairing (varint/bool)
      */
     fun buildDeviceInfoMessage(uniqueId: String, name: String): ByteArray {
         val inner = ByteArrayOutputStream()
         inner.write(encodeBytesField(1, uniqueId.toByteArray()))
         inner.write(encodeBytesField(2, name.toByteArray()))
-        inner.write(encodeBytesField(3, "Android".toByteArray()))
-        inner.write(encodeBytesField(4, "1.0".toByteArray()))
-        inner.write(encodeBytesField(5, "com.example.appletvremote".toByteArray()))
+        inner.write(encodeBytesField(3, "iPhone".toByteArray()))
+        inner.write(encodeBytesField(4, "14G60".toByteArray()))
+        inner.write(encodeBytesField(5, "com.apple.TVRemote".toByteArray()))
         inner.write(encodeVarintField(6, 1))
+        inner.write(encodeBytesField(7, "320.18".toByteArray()))
+        inner.write(encodeVarintField(8, 45))
+        inner.write(encodeVarintField(9, 1)) // supportsSystemPairing = true
+        inner.write(encodeVarintField(10, 1)) // allowsPairing = true
 
         val outer = ByteArrayOutputStream()
         outer.write(encodeVarintField(1, MSG_TYPE_DEVICE_INFO.toLong()))

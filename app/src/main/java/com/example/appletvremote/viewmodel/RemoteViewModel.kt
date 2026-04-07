@@ -53,7 +53,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectDevice(device: AppleTVDevice) {
+        Log.d(TAG, "selectDevice: ${device.name} at ${device.host}:${device.port}")
         _selectedDevice.value = device
+        // Don't wait for discovery to stop — it's async now
         discovery.stopDiscovery()
         connectToDevice(device)
     }

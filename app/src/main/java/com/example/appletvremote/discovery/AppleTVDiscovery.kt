@@ -182,17 +182,23 @@ class AppleTVDiscovery(private val context: Context) {
     fun stopDiscovery() {
         discoveryJob?.cancel()
         discoveryJob = null
-        try {
-            jmdns?.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error closing JmDNS: ${e.message}")
-        }
+        // Close JmDNS on a background thread — close() blocks for seconds
+        val mdnsToClose = jmdns
+        val lockToRelease = multicastLock
         jmdns = null
-        try {
-            if (multicastLock?.isHeld == true) {
-                multicastLock?.release()
-            }
-        } catch (_: Exception) {}
         multicastLock = null
+        scope.launch {
+            try {
+                mdnsToClose?.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing JmDNS: ${e.message}")
+            }
+            try {
+                if (lockToRelease?.isHeld == true) {
+                    lockToRelease.release()
+                }
+            } catch (_: Exception) {}
+            Log.d(TAG, "Discovery stopped")
+        }
     }
 }

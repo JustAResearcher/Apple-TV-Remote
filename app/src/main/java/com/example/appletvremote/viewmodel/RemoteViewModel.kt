@@ -95,14 +95,19 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 connection = conn
                 Log.d(TAG, "TCP connected to ${device.host}:${device.port}")
 
+                // Send DeviceInfo first (always required)
+                _statusMessage.value = "Identifying to Apple TV..."
+                val mrpPairingInit = MrpPairing(conn)
+                mrpPairingInit.sendDeviceInfo()
+                Log.d(TAG, "DeviceInfo exchange complete")
+
                 // Check if we have stored credentials for this device
                 val creds = credentialStore.load(device.uniqueId)
                 if (creds != null) {
                     _connectionState.value = ConnectionState.PAIR_VERIFY
                     _statusMessage.value = "Verifying existing pairing..."
                     try {
-                        val mrpPairing = MrpPairing(conn)
-                        val cipher = mrpPairing.pairVerify(creds)
+                        val cipher = mrpPairingInit.pairVerify(creds)
                         conn.cipher = cipher
                         _connectionState.value = ConnectionState.CONNECTED
                         _statusMessage.value = "Connected to ${device.name}"
@@ -114,10 +119,15 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         val newConn = MrpConnection()
                         newConn.connect(device.host, device.port)
                         connection = newConn
+                        // Send DeviceInfo on new connection
+                        val newPairing = MrpPairing(newConn)
+                        newPairing.sendDeviceInfo()
+                        startPairing(newPairing)
+                        return@launch
                     }
                 }
 
-                startPairing()
+                startPairing(mrpPairingInit)
             } catch (e: Exception) {
                 Log.e(TAG, "Connection failed: ${e.message}", e)
                 _lastError.value = "Failed to connect to ${device.host}:${device.port} — ${e.javaClass.simpleName}: ${e.message}"
@@ -127,15 +137,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun startPairing() {
-        val conn = connection ?: return
+    private suspend fun startPairing(mrpPairing: MrpPairing) {
         val device = _selectedDevice.value ?: return
         try {
             _connectionState.value = ConnectionState.PAIRING
             _statusMessage.value = "Sending pairing request to ${device.host}:${device.port}..."
             Log.d(TAG, "Starting pair-setup M1")
 
-            val mrpPairing = MrpPairing(conn)
             pairing = mrpPairing
 
             mrpPairing.pairSetupM1()

@@ -4,11 +4,18 @@ import java.io.ByteArrayOutputStream
 
 /**
  * Minimal protobuf encoder/decoder for MRP protocol messages.
- * Only supports varint (wire type 0) and length-delimited (wire type 2) fields.
+ *
+ * Key field numbers from the actual .proto spec:
+ *   ProtocolMessage.type = field 1 (varint)
+ *   ProtocolMessage.cryptoPairingMessage = field 39 (NOT 46!)
+ *   ProtocolMessage.sendHIDEventMessage = field 8
+ *   ProtocolMessage.deviceInfoMessage = field 17
+ *
+ *   CryptoPairingMessage.pairingData = field 1 (bytes)
+ *   CryptoPairingMessage.status = field 2 (varint, optional)
  */
 object ProtobufHelper {
 
-    // Wire types
     private const val WIRE_VARINT = 0
     private const val WIRE_LENGTH_DELIMITED = 2
 
@@ -44,39 +51,35 @@ object ProtobufHelper {
 
     /**
      * Build a ProtocolMessage for CryptoPairing.
-     * ProtocolMessage: field 1 = type (varint), field 46 = CryptoPairingMessage (bytes)
+     * ProtocolMessage: field 1 = type (varint), field 39 = CryptoPairingMessage
      * CryptoPairingMessage: field 1 = pairingData (bytes), field 2 = status (varint)
      */
     fun buildCryptoPairingMessage(pairingData: ByteArray): ByteArray {
-        // Inner CryptoPairingMessage
+        // Inner CryptoPairingMessage: field 1 = pairingData, field 2 = status 0
         val inner = ByteArrayOutputStream()
         inner.write(encodeBytesField(1, pairingData))
+        inner.write(encodeVarintField(2, 0)) // status = 0
 
-        // Outer ProtocolMessage
+        // Outer ProtocolMessage: field 1 = type, field 39 = cryptoPairingMessage
         val outer = ByteArrayOutputStream()
         outer.write(encodeVarintField(1, MSG_TYPE_CRYPTO_PAIRING.toLong()))
-        outer.write(encodeBytesField(46, inner.toByteArray()))
+        outer.write(encodeBytesField(39, inner.toByteArray()))
         return outer.toByteArray()
     }
 
     /**
      * Build a ProtocolMessage for SendHIDEvent.
-     * ProtocolMessage: field 1 = type (varint), field 8 = SendHIDEventMessage (bytes)
-     * SendHIDEventMessage: field 1 = hidDescriptorID (varint), field 2 = hidEventData (bytes)
      */
     fun buildSendHIDEventMessage(usagePage: Int, usage: Int, down: Boolean): ByteArray {
-        // 44-byte HID event data
         val hidData = ByteArray(44)
         writeUint32LE(hidData, 4, usagePage)
         writeUint32LE(hidData, 8, usage)
         writeUint32LE(hidData, 12, if (down) 1 else 0)
 
-        // Inner SendHIDEventMessage
         val inner = ByteArrayOutputStream()
-        inner.write(encodeVarintField(1, 0)) // hidDescriptorID = 0
+        inner.write(encodeVarintField(1, 0))
         inner.write(encodeBytesField(2, hidData))
 
-        // Outer ProtocolMessage
         val outer = ByteArrayOutputStream()
         outer.write(encodeVarintField(1, MSG_TYPE_SEND_HID_EVENT.toLong()))
         outer.write(encodeBytesField(8, inner.toByteArray()))
@@ -85,13 +88,23 @@ object ProtobufHelper {
 
     /**
      * Build a DeviceInfoMessage.
-     * ProtocolMessage: field 1 = type, field 17 = DeviceInfoMessage
-     * DeviceInfoMessage: field 1 = uniqueIdentifier (string), field 2 = name (string)
+     * DeviceInfoMessage fields:
+     *   1 = uniqueIdentifier (string)
+     *   2 = name (string)
+     *   3 = localizedModelName (string, optional)
+     *   4 = systemBuildVersion (string, optional)
+     *   5 = applicationBundleIdentifier (string, optional)
+     *   6 = protocolVersion (varint, optional)
+     *   9 = systemMediaApplication (string, optional)
      */
     fun buildDeviceInfoMessage(uniqueId: String, name: String): ByteArray {
         val inner = ByteArrayOutputStream()
         inner.write(encodeBytesField(1, uniqueId.toByteArray()))
         inner.write(encodeBytesField(2, name.toByteArray()))
+        inner.write(encodeBytesField(3, "Android".toByteArray()))
+        inner.write(encodeBytesField(4, "1.0".toByteArray()))
+        inner.write(encodeBytesField(5, "com.example.appletvremote".toByteArray()))
+        inner.write(encodeVarintField(6, 1))
 
         val outer = ByteArrayOutputStream()
         outer.write(encodeVarintField(1, MSG_TYPE_DEVICE_INFO.toLong()))
@@ -101,7 +114,6 @@ object ProtobufHelper {
 
     /**
      * Parse a ProtocolMessage and extract fields.
-     * Returns a map of fieldNumber -> value (ByteArray for bytes, Long encoded as ByteArray for varint)
      */
     fun parseMessage(data: ByteArray): Map<Int, Any> {
         val result = mutableMapOf<Int, Any>()
@@ -127,7 +139,7 @@ object ProtobufHelper {
                     }
                     offset = end
                 }
-                else -> break // unsupported wire type
+                else -> break
             }
         }
         return result

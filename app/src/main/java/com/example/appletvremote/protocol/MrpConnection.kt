@@ -11,10 +11,10 @@ import java.net.Socket
  * Manages the TCP connection to Apple TV for MRP protocol communication.
  *
  * MRP message framing (unencrypted):
- *   [varint length] [protobuf ProtocolMessage]
+ *   [4-byte big-endian length] [protobuf ProtocolMessage]
  *
  * MRP message framing (encrypted, after pair-verify):
- *   [2-byte LE length (AAD)] [encrypted(varint length + protobuf) + 16-byte tag]
+ *   [2-byte LE length (AAD)] [encrypted payload + 16-byte tag]
  */
 class MrpConnection {
     companion object {
@@ -60,21 +60,32 @@ class MrpConnection {
     }
 
     /**
-     * Send a protobuf-encoded ProtocolMessage with varint length framing.
+     * Send a protobuf-encoded ProtocolMessage with 4-byte big-endian length framing.
      */
     suspend fun sendMessage(protobufData: ByteArray) = withContext(Dispatchers.IO) {
         val os = outputStream ?: throw IllegalStateException("Not connected")
 
         val encCipher = cipher
         if (encCipher != null) {
-            // Encrypted: build inner frame (varint + protobuf), then encrypt
-            val innerFrame = encodeVarint(protobufData.size) + protobufData
+            // Encrypted: build inner frame (4-byte header + protobuf), then encrypt
+            val header = ByteArray(4)
+            val length = protobufData.size
+            header[0] = ((length shr 24) and 0xFF).toByte()
+            header[1] = ((length shr 16) and 0xFF).toByte()
+            header[2] = ((length shr 8) and 0xFF).toByte()
+            header[3] = (length and 0xFF).toByte()
+            val innerFrame = header + protobufData
             val encrypted = encCipher.encrypt(innerFrame)
             os.write(encrypted)
         } else {
-            // Unencrypted: varint length prefix + protobuf payload
-            val varint = encodeVarint(protobufData.size)
-            os.write(varint)
+            // Unencrypted: 4-byte big-endian length + protobuf payload
+            val header = ByteArray(4)
+            val length = protobufData.size
+            header[0] = ((length shr 24) and 0xFF).toByte()
+            header[1] = ((length shr 16) and 0xFF).toByte()
+            header[2] = ((length shr 8) and 0xFF).toByte()
+            header[3] = (length and 0xFF).toByte()
+            os.write(header)
             os.write(protobufData)
         }
         os.flush()
@@ -95,57 +106,26 @@ class MrpConnection {
             // Read encrypted payload + 16-byte auth tag
             val encrypted = readExact(ins, payloadLength + 16)
             val decrypted = encCipher.decrypt(header + encrypted)
-            // Decrypted contains: varint length + protobuf
-            val (msgLen, offset) = readVarintFromArray(decrypted, 0)
-            decrypted.copyOfRange(offset, offset + msgLen.toInt())
+            // Decrypted contains: 4-byte header + protobuf
+            if (decrypted.size > 4) {
+                decrypted.copyOfRange(4, decrypted.size)
+            } else {
+                ByteArray(0)
+            }
         } else {
-            // Read varint length prefix
-            val length = readVarint(ins)
+            // Read 4-byte big-endian length header
+            val header = readExact(ins, 4)
+            val length = ((header[0].toInt() and 0xFF) shl 24) or
+                    ((header[1].toInt() and 0xFF) shl 16) or
+                    ((header[2].toInt() and 0xFF) shl 8) or
+                    (header[3].toInt() and 0xFF)
+
             if (length <= 0 || length > 1_000_000) {
                 throw IllegalStateException("Invalid message length: $length")
             }
             Log.d(TAG, "Receiving message: $length bytes")
-            readExact(ins, length.toInt())
+            readExact(ins, length)
         }
-    }
-
-    private fun encodeVarint(value: Int): ByteArray {
-        val result = mutableListOf<Byte>()
-        var v = value
-        while (v > 0x7F) {
-            result.add(((v and 0x7F) or 0x80).toByte())
-            v = v ushr 7
-        }
-        result.add((v and 0x7F).toByte())
-        return result.toByteArray()
-    }
-
-    private fun readVarint(input: InputStream): Long {
-        var result = 0L
-        var shift = 0
-        while (true) {
-            val b = input.read()
-            if (b < 0) throw java.io.IOException("Connection closed while reading varint")
-            result = result or ((b.toLong() and 0x7F) shl shift)
-            if (b and 0x80 == 0) break
-            shift += 7
-            if (shift > 35) throw IllegalStateException("Varint too long")
-        }
-        return result
-    }
-
-    private fun readVarintFromArray(data: ByteArray, startOffset: Int): Pair<Long, Int> {
-        var result = 0L
-        var shift = 0
-        var offset = startOffset
-        while (offset < data.size) {
-            val b = data[offset].toInt() and 0xFF
-            result = result or ((b.toLong() and 0x7F) shl shift)
-            offset++
-            if (b and 0x80 == 0) break
-            shift += 7
-        }
-        return result to offset
     }
 
     private fun readExact(input: InputStream, length: Int): ByteArray {

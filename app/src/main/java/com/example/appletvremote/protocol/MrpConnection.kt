@@ -6,14 +6,23 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 /**
- * Manages the TCP connection to Apple TV for MRP protocol communication.
+ * Manages the TLS connection to Apple TV for MRP protocol communication.
  *
- * MRP message framing (unencrypted):
+ * Apple TV requires TLS for MRP. The Apple TV uses a self-signed certificate,
+ * so we disable certificate verification (same as all other MRP clients).
+ *
+ * Message framing (unencrypted, i.e. before pair-verify):
  *   [4-byte big-endian length] [protobuf ProtocolMessage]
  *
- * MRP message framing (encrypted, after pair-verify):
+ * Message framing (encrypted, after pair-verify):
  *   [2-byte LE length (AAD)] [encrypted payload + 16-byte tag]
  */
 class MrpConnection {
@@ -24,6 +33,7 @@ class MrpConnection {
     }
 
     private var socket: Socket? = null
+    private var sslSocket: SSLSocket? = null
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
     var cipher: MrpCipher? = null
@@ -32,15 +42,39 @@ class MrpConnection {
 
     suspend fun connect(host: String, port: Int) = withContext(Dispatchers.IO) {
         try {
-            val sock = Socket()
-            sock.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
-            sock.soTimeout = READ_TIMEOUT
-            sock.tcpNoDelay = true
-            socket = sock
-            inputStream = sock.getInputStream()
-            outputStream = sock.getOutputStream()
+            // Create a trust manager that accepts all certificates (Apple TV uses self-signed)
+            val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                override fun checkClientTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+                override fun checkServerTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            })
+
+            val sslContext = SSLContext.getInstance("TLS")
+            sslContext.init(null, trustAllCerts, SecureRandom())
+
+            // First connect a plain TCP socket
+            val plainSocket = Socket()
+            plainSocket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
+            Log.d(TAG, "TCP connected to $host:$port, upgrading to TLS...")
+
+            // Upgrade to TLS
+            val ssl = sslContext.socketFactory.createSocket(
+                plainSocket, host, port, true
+            ) as SSLSocket
+
+            // Disable hostname verification
+            ssl.soTimeout = READ_TIMEOUT
+
+            // Start TLS handshake
+            ssl.startHandshake()
+            Log.d(TAG, "TLS handshake complete with $host:$port")
+
+            socket = plainSocket
+            sslSocket = ssl
+            inputStream = ssl.inputStream
+            outputStream = ssl.outputStream
             isConnected = true
-            Log.d(TAG, "Connected to $host:$port")
+            Log.d(TAG, "Connected (TLS) to $host:$port")
         } catch (e: Exception) {
             Log.e(TAG, "Connection failed: ${e.message}")
             throw e
@@ -50,10 +84,12 @@ class MrpConnection {
     fun disconnect() {
         try {
             isConnected = false
+            sslSocket?.close()
             socket?.close()
         } catch (_: Exception) {
         }
         socket = null
+        sslSocket = null
         inputStream = null
         outputStream = null
         cipher = null

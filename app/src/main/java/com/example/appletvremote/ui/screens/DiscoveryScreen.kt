@@ -30,12 +30,16 @@ fun DiscoveryScreen(
     lastError: String,
     onStartDiscovery: () -> Unit,
     onSelectDevice: (AppleTVDevice) -> Unit,
-    onConnectManual: (String) -> Unit
+    onConnectManual: (String) -> Unit,
+    onClearError: () -> Unit
 ) {
     var manualIp by remember { mutableStateOf("") }
 
+    // Only auto-start discovery if we don't already have devices
     LaunchedEffect(Unit) {
-        onStartDiscovery()
+        if (devices.isEmpty() && connectionState == ConnectionState.DISCONNECTED) {
+            onStartDiscovery()
+        }
     }
 
     Scaffold(
@@ -114,12 +118,30 @@ fun DiscoveryScreen(
                         containerColor = MaterialTheme.colorScheme.errorContainer
                     )
                 ) {
-                    Text(
-                        text = lastError,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.padding(12.dp)
-                    )
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "Connection Error",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = lastError,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = onClearError,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError
+                            )
+                        ) {
+                            Text("Dismiss")
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
             }

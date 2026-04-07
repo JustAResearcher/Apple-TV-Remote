@@ -51,7 +51,8 @@ fun RemoteApp(viewModel: RemoteViewModel = viewModel()) {
                 lastError = lastError,
                 onStartDiscovery = { viewModel.startDiscovery() },
                 onSelectDevice = { viewModel.selectDevice(it) },
-                onConnectManual = { viewModel.connectManual(it) }
+                onConnectManual = { viewModel.connectManual(it) },
+                onClearError = { viewModel.clearError() }
             )
         }
 

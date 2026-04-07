@@ -50,8 +50,12 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun startDiscovery() {
         _connectionState.value = ConnectionState.DISCOVERING
         _statusMessage.value = "Searching for Apple TV..."
-        _lastError.value = ""
+        // Don't clear lastError here — keep it visible until user taps a device
         discovery.startDiscovery()
+    }
+
+    fun clearError() {
+        _lastError.value = ""
     }
 
     fun stopDiscovery() {

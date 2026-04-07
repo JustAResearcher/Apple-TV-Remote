@@ -59,6 +59,9 @@ dependencies {
     // Crypto — lightweight API only (no JCE provider conflicts with Android's built-in BC)
     implementation("org.bouncycastle:bcprov-jdk18on:1.77")
 
+    // JmDNS for reliable mDNS discovery (Android NsdManager is unreliable)
+    implementation("org.jmdns:jmdns:3.5.9")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 

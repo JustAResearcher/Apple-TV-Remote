@@ -1,168 +1,198 @@
 package com.example.appletvremote.discovery
 
 import android.content.Context
-import android.net.nsd.NsdManager
-import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Log
 import com.example.appletvremote.model.AppleTVDevice
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.net.InetAddress
+import javax.jmdns.JmDNS
+import javax.jmdns.ServiceEvent
+import javax.jmdns.ServiceListener
 
 /**
- * Discovers Apple TV devices on the local network using mDNS/NSD.
- * Looks for _mediaremotetv._tcp services (MRP protocol).
- *
- * Requires a WiFi multicast lock — Android suppresses multicast by default
- * to save battery, which prevents mDNS from receiving responses.
+ * Discovers Apple TV devices using JmDNS (pure Java mDNS).
+ * Android's built-in NsdManager is unreliable on many devices,
+ * so we use JmDNS directly with a multicast lock.
  */
 class AppleTVDiscovery(private val context: Context) {
     companion object {
         private const val TAG = "AppleTVDiscovery"
-        // No trailing dot — Android NSD appends ".local." automatically
-        private const val SERVICE_TYPE = "_mediaremotetv._tcp"
+        // Apple TV advertises on both of these
+        private val SERVICE_TYPES = arrayOf(
+            "_mediaremotetv._tcp.local.",
+            "_airplay._tcp.local."
+        )
     }
 
-    private var nsdManager: NsdManager? = null
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var jmdns: JmDNS? = null
+    private var discoveryJob: Job? = null
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
     private val _devices = MutableStateFlow<List<AppleTVDevice>>(emptyList())
     val devices: StateFlow<List<AppleTVDevice>> = _devices
     private val deviceMap = mutableMapOf<String, AppleTVDevice>()
-    private var isDiscovering = false
-    private var listener: NsdManager.DiscoveryListener? = null
-
-    private fun getNsdManager(): NsdManager? {
-        if (nsdManager == null) {
-            nsdManager = context.getSystemService(Context.NSD_SERVICE) as? NsdManager
-        }
-        return nsdManager
-    }
-
-    private fun acquireMulticastLock() {
-        if (multicastLock?.isHeld == true) return
-        try {
-            val wifiManager = context.applicationContext
-                .getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            multicastLock = wifiManager?.createMulticastLock("atvremote_mdns")?.apply {
-                setReferenceCounted(false)
-                acquire()
-            }
-            Log.d(TAG, "Multicast lock acquired")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to acquire multicast lock: ${e.message}")
-        }
-    }
-
-    private fun releaseMulticastLock() {
-        try {
-            if (multicastLock?.isHeld == true) {
-                multicastLock?.release()
-                Log.d(TAG, "Multicast lock released")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to release multicast lock: ${e.message}")
-        }
-        multicastLock = null
-    }
 
     fun startDiscovery() {
-        if (isDiscovering) return
-
-        val mgr = getNsdManager()
-        if (mgr == null) {
-            Log.e(TAG, "NsdManager not available")
-            return
-        }
-
-        // Must acquire multicast lock BEFORE starting discovery
-        acquireMulticastLock()
+        // Stop any existing discovery first
+        stopDiscovery()
 
         deviceMap.clear()
         _devices.value = emptyList()
 
-        listener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(regType: String) {
-                Log.d(TAG, "Discovery started for $regType")
-                isDiscovering = true
-            }
+        discoveryJob = scope.launch {
+            try {
+                // Acquire multicast lock
+                val wifiManager = context.applicationContext
+                    .getSystemService(Context.WIFI_SERVICE) as WifiManager
+                multicastLock = wifiManager.createMulticastLock("atvremote_jmdns").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+                Log.d(TAG, "Multicast lock acquired")
 
-            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                Log.d(TAG, "Service found: ${serviceInfo.serviceName}")
-                try {
-                    mgr.resolveService(serviceInfo, object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(si: NsdServiceInfo, errorCode: Int) {
-                            Log.e(TAG, "Resolve failed for ${si.serviceName}: error $errorCode")
+                // Get the device's WiFi IP address to bind JmDNS to the right interface
+                val wifiInfo = wifiManager.connectionInfo
+                val ipInt = wifiInfo.ipAddress
+                val ipBytes = byteArrayOf(
+                    (ipInt and 0xFF).toByte(),
+                    ((ipInt shr 8) and 0xFF).toByte(),
+                    ((ipInt shr 16) and 0xFF).toByte(),
+                    ((ipInt shr 24) and 0xFF).toByte()
+                )
+                val inetAddr = InetAddress.getByAddress(ipBytes)
+                Log.d(TAG, "Binding JmDNS to ${inetAddr.hostAddress}")
+
+                // Create JmDNS instance bound to WiFi interface
+                val mdns = JmDNS.create(inetAddr, "AndroidATVRemote")
+                jmdns = mdns
+                Log.d(TAG, "JmDNS created")
+
+                val listener = object : ServiceListener {
+                    override fun serviceAdded(event: ServiceEvent) {
+                        Log.d(TAG, "Service added: ${event.name} (${event.type})")
+                        // Request full info
+                        mdns.requestServiceInfo(event.type, event.name, true, 3000)
+                    }
+
+                    override fun serviceRemoved(event: ServiceEvent) {
+                        Log.d(TAG, "Service removed: ${event.name}")
+                        synchronized(deviceMap) {
+                            deviceMap.entries.removeIf {
+                                it.value.name == event.name
+                            }
+                            _devices.value = deviceMap.values.toList()
+                        }
+                    }
+
+                    override fun serviceResolved(event: ServiceEvent) {
+                        val info = event.info
+                        val addresses = info.inet4Addresses
+                        if (addresses.isEmpty()) {
+                            Log.d(TAG, "Resolved ${event.name} but no IPv4 address")
+                            return
                         }
 
-                        override fun onServiceResolved(si: NsdServiceInfo) {
-                            try {
-                                val host = si.host?.hostAddress ?: return
-                                val port = si.port
-                                val name = si.serviceName
-                                val uniqueId = try {
-                                    si.attributes["UniqueIdentifier"]?.let { String(it) }
-                                        ?: si.attributes["MACAddress"]?.let { String(it) }
-                                        ?: "$host:$port"
-                                } catch (_: Exception) {
-                                    "$host:$port"
-                                }
+                        val host = addresses[0].hostAddress ?: return
+                        val port = info.port
+                        val name = info.name
 
-                                Log.d(TAG, "Resolved: $name at $host:$port (id=$uniqueId)")
-                                val device = AppleTVDevice(name, host, port, uniqueId)
-                                synchronized(deviceMap) {
-                                    deviceMap[uniqueId] = device
-                                    _devices.value = deviceMap.values.toList()
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error processing resolved service: ${e.message}")
+                        // Only use _mediaremotetv port; skip _airplay unless
+                        // it's the only way we found this device
+                        val isMRP = event.type.contains("mediaremotetv")
+                        val uniqueId = info.getPropertyString("UniqueIdentifier")
+                            ?: info.getPropertyString("deviceid")
+                            ?: info.getPropertyString("MACAddress")
+                            ?: "$host:$port"
+
+                        Log.d(TAG, "Resolved: $name at $host:$port type=${event.type} id=$uniqueId")
+
+                        val device = AppleTVDevice(
+                            name = name,
+                            host = host,
+                            port = if (isMRP) port else 49152,
+                            uniqueId = uniqueId
+                        )
+
+                        synchronized(deviceMap) {
+                            // Prefer MRP entry over airplay entry for same device
+                            val existing = deviceMap[uniqueId]
+                            if (existing == null || isMRP) {
+                                deviceMap[uniqueId] = device
+                                _devices.value = deviceMap.values.toList()
                             }
                         }
-                    })
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error resolving service: ${e.message}")
+                    }
                 }
-            }
 
-            override fun onServiceLost(serviceInfo: NsdServiceInfo) {
-                Log.d(TAG, "Service lost: ${serviceInfo.serviceName}")
-                synchronized(deviceMap) {
-                    deviceMap.entries.removeIf { it.value.name == serviceInfo.serviceName }
-                    _devices.value = deviceMap.values.toList()
+                // Register listeners for all service types
+                for (serviceType in SERVICE_TYPES) {
+                    Log.d(TAG, "Adding listener for $serviceType")
+                    mdns.addServiceListener(serviceType, listener)
                 }
-            }
 
-            override fun onDiscoveryStopped(serviceType: String) {
-                Log.d(TAG, "Discovery stopped")
-                isDiscovering = false
-            }
+                // Also do an explicit list query for each type
+                // (some devices only respond to queries, not continuous listening)
+                for (serviceType in SERVICE_TYPES) {
+                    launch {
+                        try {
+                            Log.d(TAG, "Listing services for $serviceType")
+                            val services = mdns.list(serviceType, 6000)
+                            Log.d(TAG, "Found ${services.size} services for $serviceType")
+                            for (info in services) {
+                                val addresses = info.inet4Addresses
+                                if (addresses.isEmpty()) continue
+                                val host = addresses[0].hostAddress ?: continue
+                                val port = info.port
+                                val name = info.name
+                                val isMRP = serviceType.contains("mediaremotetv")
+                                val uniqueId = info.getPropertyString("UniqueIdentifier")
+                                    ?: info.getPropertyString("deviceid")
+                                    ?: info.getPropertyString("MACAddress")
+                                    ?: "$host:$port"
 
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                Log.e(TAG, "Start discovery failed: error $errorCode")
-                isDiscovering = false
+                                val device = AppleTVDevice(
+                                    name = name,
+                                    host = host,
+                                    port = if (isMRP) port else 49152,
+                                    uniqueId = uniqueId
+                                )
+                                synchronized(deviceMap) {
+                                    val existing = deviceMap[uniqueId]
+                                    if (existing == null || isMRP) {
+                                        deviceMap[uniqueId] = device
+                                        _devices.value = deviceMap.values.toList()
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error listing $serviceType: ${e.message}")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Discovery failed: ${e.message}", e)
             }
-
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                Log.e(TAG, "Stop discovery failed: error $errorCode")
-            }
-        }
-
-        try {
-            mgr.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start discovery: ${e.message}")
-            releaseMulticastLock()
         }
     }
 
     fun stopDiscovery() {
-        if (!isDiscovering) return
+        discoveryJob?.cancel()
+        discoveryJob = null
         try {
-            val mgr = nsdManager ?: return
-            listener?.let { mgr.stopServiceDiscovery(it) }
+            jmdns?.close()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to stop discovery: ${e.message}")
+            Log.e(TAG, "Error closing JmDNS: ${e.message}")
         }
-        isDiscovering = false
-        releaseMulticastLock()
+        jmdns = null
+        try {
+            if (multicastLock?.isHeld == true) {
+                multicastLock?.release()
+            }
+        } catch (_: Exception) {}
+        multicastLock = null
     }
 }

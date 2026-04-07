@@ -252,7 +252,7 @@ private fun DeviceCard(device: AppleTVDevice, onClick: () -> Unit) {
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = device.host,
+                    text = "${device.host}:${device.port}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

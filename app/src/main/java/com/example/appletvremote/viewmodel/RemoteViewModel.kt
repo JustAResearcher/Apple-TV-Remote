@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.appletvremote.discovery.AppleTVDiscovery
 import com.example.appletvremote.model.*
 import com.example.appletvremote.protocol.MrpConnection
+import com.example.appletvremote.protocol.MrpDiagnostic
 import com.example.appletvremote.protocol.MrpPairing
 import com.example.appletvremote.protocol.ProtobufHelper
 import com.example.appletvremote.storage.CredentialStore
@@ -89,6 +90,19 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private fun connectToDevice(device: AppleTVDevice) {
         viewModelScope.launch {
             try {
+                // Run raw wire diagnostic to see exactly what happens
+                _statusMessage.value = "Diagnosing ${device.host}:${device.port}..."
+                val diagReport = MrpDiagnostic.diagnose(
+                    device.host, device.port,
+                    java.util.UUID.randomUUID().toString()
+                )
+                Log.d(TAG, diagReport)
+                _lastError.value = diagReport
+                _statusMessage.value = ""
+                _connectionState.value = ConnectionState.DISCONNECTED
+                return@launch
+
+                // --- Normal flow below (disabled for diagnostic) ---
                 Log.d(TAG, "Connecting to ${device.host}:${device.port}")
                 val conn = MrpConnection()
                 conn.connect(device.host, device.port)

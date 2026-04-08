@@ -30,28 +30,40 @@ class MrpPairing(private val connection: MrpConnection) {
      * Send DeviceInfo and wait for the Apple TV's response.
      * Must be called before pairing or pair-verify.
      */
-    suspend fun sendDeviceInfo() {
+    /**
+     * Send DeviceInfo and read the response.
+     * Returns a diagnostic string for debugging.
+     */
+    suspend fun sendDeviceInfo(): String {
         Log.d(TAG, "Sending DeviceInfoMessage")
         val msg = ProtobufHelper.buildDeviceInfoMessage(clientId, "Android Remote")
+
+        // Log the raw bytes we're about to send
+        val hexSent = msg.take(64).joinToString(" ") { "%02x".format(it) }
+        Log.d(TAG, "Sending ${msg.size} bytes: $hexSent...")
+
         connection.sendMessage(msg)
 
         // Read the Apple TV's DeviceInfoMessage response
         Log.d(TAG, "Waiting for Apple TV DeviceInfoMessage...")
         val response = connection.receiveMessage()
+        val hexRecv = response.take(64).joinToString(" ") { "%02x".format(it) }
+        Log.d(TAG, "Received ${response.size} bytes: $hexRecv...")
+
         val parsed = ProtobufHelper.parseMessage(response)
         val msgType = parsed[1] as? Long
-        Log.d(TAG, "Received message type: $msgType")
+        Log.d(TAG, "Received message type: $msgType, fields: ${parsed.keys}")
 
-        // Apple TV may send multiple messages — consume until we get past DeviceInfo
-        // or just proceed since we only need to know it responded
+        var deviceName = "unknown"
         if (msgType == ProtobufHelper.MSG_TYPE_DEVICE_INFO.toLong()) {
             val innerBytes = parsed[17] as? ByteArray
             if (innerBytes != null) {
                 val inner = ProtobufHelper.parseMessage(innerBytes)
-                val deviceName = (inner[2] as? ByteArray)?.let { String(it) } ?: "unknown"
+                deviceName = (inner[2] as? ByteArray)?.let { String(it) } ?: "unknown"
                 Log.d(TAG, "Apple TV identified as: $deviceName")
             }
         }
+        return "DeviceInfo OK: type=$msgType, device=$deviceName"
     }
 
     /**

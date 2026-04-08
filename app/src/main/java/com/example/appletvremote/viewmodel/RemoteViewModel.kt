@@ -93,13 +93,12 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 val conn = MrpConnection()
                 conn.connect(device.host, device.port)
                 connection = conn
-                Log.d(TAG, "Connected to ${device.host}:${device.port}")
-
-                // Send DeviceInfo first (always required)
-                _statusMessage.value = "Connected, identifying to Apple TV..."
+                Log.d(TAG, "TCP connected to ${device.host}:${device.port}")
+                _statusMessage.value = "TCP connected to ${device.host}:${device.port}"
                 val mrpPairingInit = MrpPairing(conn)
-                mrpPairingInit.sendDeviceInfo()
-                Log.d(TAG, "DeviceInfo exchange complete")
+                val diagInfo = mrpPairingInit.sendDeviceInfo()
+                Log.d(TAG, "DeviceInfo exchange complete: $diagInfo")
+                _statusMessage.value = diagInfo
 
                 // Check if we have stored credentials for this device
                 val creds = credentialStore.load(device.uniqueId)

@@ -56,7 +56,7 @@ class MrpPairing(private val connection: MrpConnection) {
 
         var deviceName = "unknown"
         if (msgType == ProtobufHelper.MSG_TYPE_DEVICE_INFO.toLong()) {
-            val innerBytes = parsed[17] as? ByteArray
+            val innerBytes = parsed[20] as? ByteArray  // DeviceInfoMessage is extension field 20
             if (innerBytes != null) {
                 val inner = ProtobufHelper.parseMessage(innerBytes)
                 deviceName = (inner[2] as? ByteArray)?.let { String(it) } ?: "unknown"

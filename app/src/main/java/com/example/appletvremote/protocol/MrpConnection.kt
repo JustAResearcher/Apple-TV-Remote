@@ -6,12 +6,18 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 /**
- * Manages the TCP connection to Apple TV for MRP protocol communication.
+ * Manages the connection to Apple TV for MRP protocol communication.
  *
- * MRP uses plain TCP (NOT TLS). Encryption is handled at the application
- * layer using ChaCha20-Poly1305 after pair-verify completes.
+ * Tries plain TCP first. If the Apple TV closes the connection (tvOS 15+
+ * requires encrypted transport), falls back to TLS.
  *
  * Message framing (before pair-verify):
  *   [varint length] [protobuf ProtocolMessage]
@@ -22,8 +28,8 @@ import java.net.Socket
 class MrpConnection {
     companion object {
         private const val TAG = "MrpConnection"
-        private const val CONNECT_TIMEOUT = 10_000
-        private const val READ_TIMEOUT = 30_000
+        private const val CONNECT_TIMEOUT = 5_000
+        private const val READ_TIMEOUT = 15_000
     }
 
     private var socket: Socket? = null
@@ -32,22 +38,71 @@ class MrpConnection {
     var cipher: MrpCipher? = null
     var isConnected = false
         private set
+    var usingTls = false
+        private set
 
+    /**
+     * Connect to Apple TV. Tries plain TCP first, then TLS if that fails.
+     */
     suspend fun connect(host: String, port: Int) = withContext(Dispatchers.IO) {
+        // Try plain TCP first
         try {
-            val sock = Socket()
-            sock.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
-            sock.soTimeout = READ_TIMEOUT
-            sock.tcpNoDelay = true
-            socket = sock
-            inputStream = sock.getInputStream()
-            outputStream = sock.getOutputStream()
-            isConnected = true
-            Log.d(TAG, "Connected to $host:$port (plain TCP)")
+            connectPlain(host, port)
+            // Test if the connection stays open by waiting briefly
+            Log.d(TAG, "Plain TCP connected to $host:$port")
+            return@withContext
         } catch (e: Exception) {
-            Log.e(TAG, "Connection failed: ${e.message}")
+            Log.d(TAG, "Plain TCP failed to $host:$port: ${e.message}")
+            disconnect()
+        }
+
+        // Fall back to TLS
+        try {
+            connectTls(host, port)
+            Log.d(TAG, "TLS connected to $host:$port")
+            return@withContext
+        } catch (e: Exception) {
+            Log.e(TAG, "TLS also failed to $host:$port: ${e.message}")
             throw e
         }
+    }
+
+    private fun connectPlain(host: String, port: Int) {
+        val sock = Socket()
+        sock.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
+        sock.soTimeout = READ_TIMEOUT
+        sock.tcpNoDelay = true
+        socket = sock
+        inputStream = sock.getInputStream()
+        outputStream = sock.getOutputStream()
+        isConnected = true
+        usingTls = false
+    }
+
+    private fun connectTls(host: String, port: Int) {
+        val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+            override fun checkServerTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+        })
+
+        val sslContext = SSLContext.getInstance("TLS")
+        sslContext.init(null, trustAllCerts, SecureRandom())
+
+        val plainSocket = Socket()
+        plainSocket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
+
+        val ssl = sslContext.socketFactory.createSocket(
+            plainSocket, host, port, true
+        ) as SSLSocket
+        ssl.soTimeout = READ_TIMEOUT
+        ssl.startHandshake()
+
+        socket = plainSocket
+        inputStream = ssl.inputStream
+        outputStream = ssl.outputStream
+        isConnected = true
+        usingTls = true
     }
 
     fun disconnect() {
@@ -62,9 +117,6 @@ class MrpConnection {
         cipher = null
     }
 
-    /**
-     * Send a protobuf-encoded ProtocolMessage.
-     */
     suspend fun sendMessage(protobufData: ByteArray) = withContext(Dispatchers.IO) {
         val os = outputStream ?: throw IllegalStateException("Not connected")
 
@@ -73,29 +125,23 @@ class MrpConnection {
             val encrypted = encCipher.encrypt(protobufData)
             os.write(encrypted)
         } else {
-            // Varint length prefix + protobuf payload
             os.write(encodeVarint(protobufData.size))
             os.write(protobufData)
         }
         os.flush()
-        Log.d(TAG, "Sent message: ${protobufData.size} bytes (encrypted=${encCipher != null})")
+        Log.d(TAG, "Sent message: ${protobufData.size} bytes (tls=$usingTls, encrypted=${encCipher != null})")
     }
 
-    /**
-     * Receive a protobuf ProtocolMessage.
-     */
     suspend fun receiveMessage(): ByteArray = withContext(Dispatchers.IO) {
         val ins = inputStream ?: throw IllegalStateException("Not connected")
 
         val encCipher = cipher
         if (encCipher != null) {
-            // Read 2-byte encrypted header (AAD = plaintext length LE)
             val header = readExact(ins, 2)
             val payloadLength = encCipher.decryptedLength(header)
             val encrypted = readExact(ins, payloadLength + 16)
             encCipher.decrypt(header + encrypted)
         } else {
-            // Read varint length prefix
             val length = readVarint(ins)
             if (length <= 0 || length > 1_000_000) {
                 throw IllegalStateException("Invalid message length: $length")

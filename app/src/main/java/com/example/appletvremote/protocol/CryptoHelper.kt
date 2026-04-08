@@ -118,28 +118,22 @@ object CryptoHelper {
     }
 }
 
-class MrpCipher(private val readKey: ByteArray, private val writeKey: ByteArray) {
-    private var readCounter: Long = 0
-    private var writeCounter: Long = 0
+/**
+ * ChaCha20-Poly1305 cipher matching pyatv's Chacha20Cipher8byteNonce.
+ * No AAD, no 2-byte length header. Just encrypt/decrypt with counter-based nonce.
+ * The varint framing in MrpConnection handles message boundaries.
+ */
+class MrpCipher(private val outputKey: ByteArray, private val inputKey: ByteArray) {
+    private var outCounter: Long = 0
+    private var inCounter: Long = 0
 
     fun encrypt(data: ByteArray): ByteArray {
-        val nonce = CryptoHelper.buildNonce(writeCounter++)
-        val aad = ByteArray(2)
-        aad[0] = (data.size and 0xFF).toByte()
-        aad[1] = ((data.size shr 8) and 0xFF).toByte()
-        val encrypted = CryptoHelper.chaCha20Poly1305Encrypt(writeKey, nonce, data, aad)
-        return aad + encrypted
+        val nonce = CryptoHelper.buildNonce(outCounter++)
+        return CryptoHelper.chaCha20Poly1305Encrypt(outputKey, nonce, data)
     }
 
     fun decrypt(data: ByteArray): ByteArray {
-        val nonce = CryptoHelper.buildNonce(readCounter++)
-        val aad = data.copyOfRange(0, 2)
-        val length = (aad[0].toInt() and 0xFF) or ((aad[1].toInt() and 0xFF) shl 8)
-        val ciphertext = data.copyOfRange(2, 2 + length + 16)
-        return CryptoHelper.chaCha20Poly1305Decrypt(readKey, nonce, ciphertext, aad)
-    }
-
-    fun decryptedLength(header: ByteArray): Int {
-        return (header[0].toInt() and 0xFF) or ((header[1].toInt() and 0xFF) shl 8)
+        val nonce = CryptoHelper.buildNonce(inCounter++)
+        return CryptoHelper.chaCha20Poly1305Decrypt(inputKey, nonce, data)
     }
 }

@@ -4,15 +4,7 @@ import java.io.ByteArrayOutputStream
 
 /**
  * Minimal protobuf encoder/decoder for MRP protocol messages.
- *
- * Key field numbers from the actual .proto spec:
- *   ProtocolMessage.type = field 1 (varint)
- *   ProtocolMessage.cryptoPairingMessage = field 39 (NOT 46!)
- *   ProtocolMessage.sendHIDEventMessage = field 8
- *   ProtocolMessage.deviceInfoMessage = field 17
- *
- *   CryptoPairingMessage.pairingData = field 1 (bytes)
- *   CryptoPairingMessage.status = field 2 (varint, optional)
+ * Field numbers sourced from pyatv and node-appletv implementations.
  */
 object ProtobufHelper {
 
@@ -50,17 +42,24 @@ object ProtobufHelper {
     }
 
     /**
-     * Build a ProtocolMessage for CryptoPairing.
-     * ProtocolMessage: field 1 = type (varint), field 39 = CryptoPairingMessage
-     * CryptoPairingMessage: field 1 = pairingData (bytes), field 2 = status (varint)
+     * Build a CryptoPairingMessage wrapped in ProtocolMessage.
+     *
+     * ProtocolMessage: field 1=type(51), field 39=CryptoPairingMessage
+     * CryptoPairingMessage fields (from pyatv crypto_pairing()):
+     *   1 = pairingData (bytes) — TLV8-encoded HAP pairing data
+     *   2 = status (varint) — 0
+     *   3 = isRetrying (varint/bool) — false
+     *   4 = isUsingSystemPairing (varint/bool) — false
+     *   5 = state (varint) — 2 for pair-setup, 0 for pair-verify
      */
-    fun buildCryptoPairingMessage(pairingData: ByteArray): ByteArray {
-        // Inner CryptoPairingMessage: field 1 = pairingData, field 2 = status 0
+    fun buildCryptoPairingMessage(pairingData: ByteArray, isPairing: Boolean): ByteArray {
         val inner = ByteArrayOutputStream()
         inner.write(encodeBytesField(1, pairingData))
-        inner.write(encodeVarintField(2, 0)) // status = 0
+        inner.write(encodeVarintField(2, 0))     // status = 0
+        inner.write(encodeVarintField(3, 0))     // isRetrying = false
+        inner.write(encodeVarintField(4, 0))     // isUsingSystemPairing = false
+        inner.write(encodeVarintField(5, if (isPairing) 2 else 0))  // state
 
-        // Outer ProtocolMessage: field 1 = type, field 39 = cryptoPairingMessage
         val outer = ByteArrayOutputStream()
         outer.write(encodeVarintField(1, MSG_TYPE_CRYPTO_PAIRING.toLong()))
         outer.write(encodeBytesField(39, inner.toByteArray()))
@@ -68,7 +67,7 @@ object ProtobufHelper {
     }
 
     /**
-     * Build a ProtocolMessage for SendHIDEvent.
+     * Build a SendHIDEventMessage wrapped in ProtocolMessage.
      */
     fun buildSendHIDEventMessage(usagePage: Int, usage: Int, down: Boolean): ByteArray {
         val hidData = ByteArray(44)
@@ -87,41 +86,70 @@ object ProtobufHelper {
     }
 
     /**
-     * Build a DeviceInfoMessage matching the format used by the official Apple TV Remote app.
-     * DeviceInfoMessage fields (from node-appletv / pyatv):
-     *   1 = uniqueIdentifier (string)
-     *   2 = name (string)
-     *   3 = localizedModelName (string)
-     *   4 = systemBuildVersion (string)
-     *   5 = applicationBundleIdentifier (string)
-     *   6 = protocolVersion (varint)
-     *   7 = applicationBundleVersion (string)
-     *   8 = lastSupportedMessageType (varint)
-     *   9 = supportsSystemPairing (varint/bool)
-     *   10 = allowsPairing (varint/bool)
+     * Build a DeviceInfoMessage matching pyatv's device_information().
+     * All fields from pyatv/protocols/mrp/messages.py device_information():
+     *
+     * DeviceInfoMessage fields:
+     *   1  = uniqueIdentifier (string)
+     *   2  = name (string)
+     *   3  = localizedModelName (string) — "iPhone"
+     *   4  = systemBuildVersion (string) — iOS build number
+     *   5  = applicationBundleIdentifier (string) — "com.apple.TVRemote"
+     *   6  = protocolVersion (varint) — 1
+     *   7  = applicationBundleVersion (string)
+     *   8  = lastSupportedMessageType (varint) — 108
+     *   9  = supportsSystemPairing (varint/bool) — true
+     *   10 = allowsPairing (varint/bool) — true
+     *   11 = systemMediaApplication (string) — "com.apple.TVMusic"
+     *   12 = supportsACL (varint/bool) — true
+     *   13 = supportsSharedQueue (varint/bool) — true
+     *   14 = sharedQueueVersion (varint) — 2
+     *   15 = supportsExtendedMotion (varint/bool) — true
+     *   16 = deviceClass (varint) — 1 (iPhone)
+     *   17 = logicalDeviceCount (varint) — 1
      */
     fun buildDeviceInfoMessage(uniqueId: String, name: String): ByteArray {
         val inner = ByteArrayOutputStream()
         inner.write(encodeBytesField(1, uniqueId.toByteArray()))
         inner.write(encodeBytesField(2, name.toByteArray()))
         inner.write(encodeBytesField(3, "iPhone".toByteArray()))
-        inner.write(encodeBytesField(4, "14G60".toByteArray()))
+        inner.write(encodeBytesField(4, "19H12".toByteArray()))
         inner.write(encodeBytesField(5, "com.apple.TVRemote".toByteArray()))
         inner.write(encodeVarintField(6, 1))
-        inner.write(encodeBytesField(7, "320.18".toByteArray()))
-        inner.write(encodeVarintField(8, 45))
-        inner.write(encodeVarintField(9, 1)) // supportsSystemPairing = true
-        inner.write(encodeVarintField(10, 1)) // allowsPairing = true
+        inner.write(encodeBytesField(7, "344.28".toByteArray()))
+        inner.write(encodeVarintField(8, 108))
+        inner.write(encodeVarintField(9, 1))     // supportsSystemPairing
+        inner.write(encodeVarintField(10, 1))    // allowsPairing
+        inner.write(encodeBytesField(11, "com.apple.TVMusic".toByteArray()))
+        inner.write(encodeVarintField(12, 1))    // supportsACL
+        inner.write(encodeVarintField(13, 1))    // supportsSharedQueue
+        inner.write(encodeVarintField(14, 2))    // sharedQueueVersion
+        inner.write(encodeVarintField(15, 1))    // supportsExtendedMotion
+        inner.write(encodeVarintField(16, 1))    // deviceClass = iPhone
+        inner.write(encodeVarintField(17, 1))    // logicalDeviceCount
 
         val outer = ByteArrayOutputStream()
         outer.write(encodeVarintField(1, MSG_TYPE_DEVICE_INFO.toLong()))
+        // DeviceInfoMessage is extension field 17 of ProtocolMessage
         outer.write(encodeBytesField(17, inner.toByteArray()))
         return outer.toByteArray()
     }
 
     /**
-     * Parse a ProtocolMessage and extract fields.
+     * Build SetConnectionStateMessage (sent after encryption is enabled).
      */
+    fun buildSetConnectionStateMessage(): ByteArray {
+        // SetConnectionStateMessage field 1 = state (varint, 1 = connected)
+        val inner = ByteArrayOutputStream()
+        inner.write(encodeVarintField(1, 1))
+
+        val outer = ByteArrayOutputStream()
+        outer.write(encodeVarintField(1, MSG_TYPE_SET_STATE.toLong()))
+        // SetConnectionStateMessage is extension field 50 of ProtocolMessage
+        outer.write(encodeBytesField(50, inner.toByteArray()))
+        return outer.toByteArray()
+    }
+
     fun parseMessage(data: ByteArray): Map<Int, Any> {
         val result = mutableMapOf<Int, Any>()
         var offset = 0
@@ -173,7 +201,6 @@ object ProtobufHelper {
         data[offset + 3] = ((value shr 24) and 0xFF).toByte()
     }
 
-    // MRP message type constants
     const val MSG_TYPE_SEND_COMMAND = 1
     const val MSG_TYPE_SEND_HID_EVENT = 6
     const val MSG_TYPE_DEVICE_INFO = 15

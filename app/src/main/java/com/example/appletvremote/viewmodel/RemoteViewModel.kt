@@ -93,11 +93,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 val conn = MrpConnection()
                 conn.connect(device.host, device.port)
                 connection = conn
-                val transport = if (conn.usingTls) "TLS" else "TCP"
-                Log.d(TAG, "Connected via $transport to ${device.host}:${device.port}")
+                Log.d(TAG, "Connected to ${device.host}:${device.port}")
 
                 // Send DeviceInfo first (always required)
-                _statusMessage.value = "Connected via $transport, identifying..."
+                _statusMessage.value = "Connected, identifying to Apple TV..."
                 val mrpPairingInit = MrpPairing(conn)
                 mrpPairingInit.sendDeviceInfo()
                 Log.d(TAG, "DeviceInfo exchange complete")

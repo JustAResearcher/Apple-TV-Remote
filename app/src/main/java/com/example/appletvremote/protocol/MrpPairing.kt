@@ -77,7 +77,7 @@ class MrpPairing(private val connection: MrpConnection) {
             .add(TlvType.METHOD, 0)
             .encode()
 
-        val msg = ProtobufHelper.buildCryptoPairingMessage(tlv)
+        val msg = ProtobufHelper.buildCryptoPairingMessage(tlv, true)
         connection.sendMessage(msg)
     }
 
@@ -129,7 +129,7 @@ class MrpPairing(private val connection: MrpConnection) {
             .add(TlvType.PROOF, proof)
             .encode()
 
-        val msg = ProtobufHelper.buildCryptoPairingMessage(tlv)
+        val msg = ProtobufHelper.buildCryptoPairingMessage(tlv, true)
         connection.sendMessage(msg)
     }
 
@@ -186,7 +186,7 @@ class MrpPairing(private val connection: MrpConnection) {
             .add(TlvType.ENCRYPTED_DATA, encryptedData)
             .encode()
 
-        val msg = ProtobufHelper.buildCryptoPairingMessage(tlv)
+        val msg = ProtobufHelper.buildCryptoPairingMessage(tlv, true)
         connection.sendMessage(msg)
     }
 
@@ -235,7 +235,7 @@ class MrpPairing(private val connection: MrpConnection) {
             .add(TlvType.STATE, 1)
             .add(TlvType.PUBLIC_KEY, x25519.publicKey)
             .encode()
-        connection.sendMessage(ProtobufHelper.buildCryptoPairingMessage(m1Tlv))
+        connection.sendMessage(ProtobufHelper.buildCryptoPairingMessage(m1Tlv, false))
 
         // M2
         Log.d(TAG, "Pair-Verify M2: Receiving server response")
@@ -276,7 +276,7 @@ class MrpPairing(private val connection: MrpConnection) {
             .add(TlvType.STATE, 3)
             .add(TlvType.ENCRYPTED_DATA, encryptedInner)
             .encode()
-        connection.sendMessage(ProtobufHelper.buildCryptoPairingMessage(m3Tlv))
+        connection.sendMessage(ProtobufHelper.buildCryptoPairingMessage(m3Tlv, false))
 
         // M4
         Log.d(TAG, "Pair-Verify M4: Waiting for confirmation")

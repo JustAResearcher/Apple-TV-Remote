@@ -69,8 +69,6 @@ class SrpClient {
             throw IllegalStateException("Invalid server public key")
         }
 
-        val A = BigInteger(1, publicKey)
-
         // k = H(N | PAD(g))
         val k = hashBigInteger(N.toByteArray().stripLeadingZeros(), padToN(g.toByteArray().stripLeadingZeros()))
 
@@ -88,15 +86,15 @@ class SrpClient {
         val gx = g.modPow(x, N)
         val kgx = k.multiply(gx).mod(N)
         val diff = B.subtract(kgx).mod(N)
-        val exp = privateKey.add(u.multiply(x)).mod(N.subtract(BigInteger.ONE))
+        val exp = privateKey.add(u.multiply(x))
         val S = diff.modPow(exp, N)
 
         // K = H(S)
-        sessionKey = sha512(padToN(S.toByteArray().stripLeadingZeros()))
+        sessionKey = sha512(S.toByteArray().stripLeadingZeros())
 
         // M1 = H(H(N) XOR H(g) | H(I) | salt | A | B | K)
         val hN = sha512(N.toByteArray().stripLeadingZeros())
-        val hg = sha512(padToN(g.toByteArray().stripLeadingZeros()))
+        val hg = sha512(g.toByteArray().stripLeadingZeros())
         val hNxorHg = ByteArray(hN.size) { (hN[it].toInt() xor hg[it].toInt()).toByte() }
         val hI = sha512(identity.toByteArray())
 
@@ -104,8 +102,8 @@ class SrpClient {
             hNxorHg,
             hI,
             salt,
-            padToN(publicKey),
-            padToN(serverPublicKey),
+            publicKey.stripLeadingZeros(),
+            serverPublicKey.stripLeadingZeros(),
             sessionKey
         )
 
@@ -114,7 +112,7 @@ class SrpClient {
 
     fun verifyServerProof(serverProof: ByteArray): Boolean {
         // M2 = H(A | M1 | K)
-        val expectedM2 = sha512(padToN(publicKey), clientProof, sessionKey)
+        val expectedM2 = sha512(publicKey.stripLeadingZeros(), clientProof, sessionKey)
         return expectedM2.contentEquals(serverProof)
     }
 

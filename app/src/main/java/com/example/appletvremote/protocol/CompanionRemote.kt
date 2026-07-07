@@ -291,8 +291,21 @@ class CompanionRemote(private val connection: CompanionConnection) {
             ?: throw IllegalStateException("No Companion pairing data")
         val tlv = TlvDecoder(pairingData).decode()
         tlv[TlvType.ERROR]?.firstOrNull()?.let { error ->
-            throw IllegalStateException("Companion pairing error $error")
+            throw IllegalStateException("Companion pairing error $error (${pairingErrorMessage(error.toInt())})")
         }
         return tlv
+    }
+
+    private fun pairingErrorMessage(error: Int): String {
+        return when (error) {
+            1 -> "unknown"
+            2 -> "authentication failed or PIN rejected"
+            3 -> "pairing backoff"
+            4 -> "too many paired remotes"
+            5 -> "too many PIN attempts"
+            6 -> "pairing unavailable"
+            7 -> "device busy"
+            else -> "unknown"
+        }
     }
 }

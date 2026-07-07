@@ -3,6 +3,7 @@ package com.example.appletvremote.protocol
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.UUID
 
 object Opack {
     fun pack(value: Any?): ByteArray = packValue(value, mutableListOf())
@@ -24,6 +25,7 @@ object Opack {
             is Long -> packLong(value)
             is Float -> packDouble(value.toDouble())
             is Double -> packDouble(value)
+            is UUID -> packUuid(value)
             is String -> packString(value)
             is ByteArray -> packBytes(value)
             is List<*> -> {
@@ -90,6 +92,13 @@ object Opack {
             .array()
     }
 
+    private fun packUuid(value: UUID): ByteArray {
+        return byteArrayOf(0x05) + ByteBuffer.allocate(16)
+            .putLong(value.mostSignificantBits)
+            .putLong(value.leastSignificantBits)
+            .array()
+    }
+
     private fun packString(value: String): ByteArray {
         val encoded = value.toByteArray()
         return packSized(0x40, 0x61, encoded)
@@ -133,6 +142,13 @@ object Opack {
             marker == 0x04 -> {
                 addToObjects = false
                 null to startOffset + 1
+            }
+            marker == 0x05 -> {
+                val buffer = ByteBuffer.wrap(data, startOffset + 1, 16)
+                UUID(buffer.long, buffer.long) to startOffset + 17
+            }
+            marker == 0x06 -> {
+                readLongLE(data, startOffset + 1, 8) to startOffset + 9
             }
             marker in 0x08..0x2F -> {
                 addToObjects = false

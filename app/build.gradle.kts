@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.appletvremote"
         minSdk = 26
         targetSdk = 34
-        versionCode = 142
-        versionName = "1.4.2"
+        versionCode = 143
+        versionName = "1.4.3"
     }
 
     buildTypes {

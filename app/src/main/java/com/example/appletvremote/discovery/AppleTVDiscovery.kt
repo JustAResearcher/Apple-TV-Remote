@@ -1,6 +1,7 @@
 package com.example.appletvremote.discovery
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
 import android.util.Log
 import com.example.appletvremote.model.AppleTVDevice
@@ -54,16 +55,7 @@ class AppleTVDiscovery(private val context: Context) {
                 }
                 Log.d(TAG, "Multicast lock acquired")
 
-                // Get the device's WiFi IP address to bind JmDNS to the right interface
-                val wifiInfo = wifiManager.connectionInfo
-                val ipInt = wifiInfo.ipAddress
-                val ipBytes = byteArrayOf(
-                    (ipInt and 0xFF).toByte(),
-                    ((ipInt shr 8) and 0xFF).toByte(),
-                    ((ipInt shr 16) and 0xFF).toByte(),
-                    ((ipInt shr 24) and 0xFF).toByte()
-                )
-                val inetAddr = InetAddress.getByAddress(ipBytes)
+                val inetAddr = findActiveIpv4Address(wifiManager)
                 Log.d(TAG, "Binding JmDNS to ${inetAddr.hostAddress}")
 
                 // Create JmDNS instance bound to WiFi interface
@@ -200,5 +192,37 @@ class AppleTVDiscovery(private val context: Context) {
             } catch (_: Exception) {}
             Log.d(TAG, "Discovery stopped")
         }
+    }
+
+    private fun findActiveIpv4Address(wifiManager: WifiManager): InetAddress {
+        val connectivityManager = context.applicationContext
+            .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val activeNetwork = connectivityManager.activeNetwork
+        val linkProperties = activeNetwork?.let(connectivityManager::getLinkProperties)
+        val activeAddress = linkProperties
+            ?.linkAddresses
+            ?.map { it.address }
+            ?.firstOrNull { address ->
+                address is java.net.Inet4Address &&
+                        !address.isLoopbackAddress &&
+                        !address.isLinkLocalAddress
+            }
+
+        if (activeAddress != null) {
+            return activeAddress
+        }
+
+        val ipInt = wifiManager.connectionInfo.ipAddress
+        if (ipInt != 0) {
+            val ipBytes = byteArrayOf(
+                (ipInt and 0xFF).toByte(),
+                ((ipInt shr 8) and 0xFF).toByte(),
+                ((ipInt shr 16) and 0xFF).toByte(),
+                ((ipInt shr 24) and 0xFF).toByte()
+            )
+            return InetAddress.getByAddress(ipBytes)
+        }
+
+        throw IllegalStateException("No active IPv4 address found for mDNS discovery")
     }
 }

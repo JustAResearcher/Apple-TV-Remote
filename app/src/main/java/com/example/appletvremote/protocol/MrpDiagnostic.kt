@@ -1,6 +1,7 @@
 package com.example.appletvremote.protocol
 
 import android.util.Log
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.InetSocketAddress
@@ -109,7 +110,7 @@ object MrpDiagnostic {
             ssl.soTimeout = 5000
 
             // Set ALPN if provided
-            if (alpn != null) {
+            if (alpn != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
                     val params = ssl.sslParameters
                     params.applicationProtocols = alpn
@@ -118,6 +119,8 @@ object MrpDiagnostic {
                 } catch (e: Exception) {
                     report.appendLine("ALPN not supported: ${e.message}")
                 }
+            } else if (alpn != null) {
+                report.appendLine("ALPN requires Android 10 or newer")
             }
 
             ssl.startHandshake()

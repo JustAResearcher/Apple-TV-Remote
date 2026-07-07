@@ -270,6 +270,22 @@ class MrpPairing(private val connection: MrpConnection) {
             sharedSecret, "Pair-Verify-Encrypt-Salt", "Pair-Verify-Encrypt-Info", 32
         )
 
+        val m2EncryptedData = m2Tlv[TlvType.ENCRYPTED_DATA]
+            ?: throw IllegalStateException("No encrypted data in pair-verify M2")
+        val m2Nonce = ByteArray(12)
+        "PV-Msg02".toByteArray().copyInto(m2Nonce, 4)
+        val m2DecryptedTlv = TlvDecoder(
+            CryptoHelper.chaCha20Poly1305Decrypt(sessionKey, m2Nonce, m2EncryptedData)
+        ).decode()
+        val peerIdentifier = m2DecryptedTlv[TlvType.IDENTIFIER]
+            ?: throw IllegalStateException("No server identifier in pair-verify M2")
+        val peerSignature = m2DecryptedTlv[TlvType.SIGNATURE]
+            ?: throw IllegalStateException("No server signature in pair-verify M2")
+        val peerInfo = serverX25519PubKey + peerIdentifier + x25519.publicKey
+        if (!CryptoHelper.ed25519Verify(credentials.peerPublicKey, peerInfo, peerSignature)) {
+            throw IllegalStateException("Server pair-verify signature failed")
+        }
+
         // M3
         Log.d(TAG, "Pair-Verify M3: Sending encrypted proof")
         val deviceInfo = x25519.publicKey + credentials.clientId.toByteArray() + serverX25519PubKey
@@ -309,6 +325,6 @@ class MrpPairing(private val connection: MrpConnection) {
         )
 
         Log.d(TAG, "Pair-Verify complete! Encryption established.")
-        return MrpCipher(readKey, writeKey)
+        return MrpCipher(writeKey, readKey)
     }
 }

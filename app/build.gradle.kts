@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.appletvremote"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 140
+        versionName = "1.4.0"
     }
 
     buildTypes {
@@ -67,6 +67,8 @@ dependencies {
 
     // DataStore for persisting pairing credentials
     implementation("androidx.datastore:datastore-preferences:1.0.0")
+
+    testImplementation("junit:junit:4.13.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

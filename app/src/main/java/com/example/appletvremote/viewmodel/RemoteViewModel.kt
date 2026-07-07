@@ -7,7 +7,6 @@ import androidx.lifecycle.viewModelScope
 import com.example.appletvremote.discovery.AppleTVDiscovery
 import com.example.appletvremote.model.*
 import com.example.appletvremote.protocol.MrpConnection
-import com.example.appletvremote.protocol.MrpDiagnostic
 import com.example.appletvremote.protocol.MrpPairing
 import com.example.appletvremote.protocol.ProtobufHelper
 import com.example.appletvremote.storage.CredentialStore
@@ -90,19 +89,6 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private fun connectToDevice(device: AppleTVDevice) {
         viewModelScope.launch {
             try {
-                // Run raw wire diagnostic to see exactly what happens
-                _statusMessage.value = "Diagnosing ${device.host}:${device.port}..."
-                val diagReport = MrpDiagnostic.diagnose(
-                    device.host, device.port,
-                    java.util.UUID.randomUUID().toString()
-                )
-                Log.d(TAG, diagReport)
-                _lastError.value = diagReport
-                _statusMessage.value = ""
-                _connectionState.value = ConnectionState.DISCONNECTED
-                return@launch
-
-                // --- Normal flow below (disabled for diagnostic) ---
                 Log.d(TAG, "Connecting to ${device.host}:${device.port}")
                 val conn = MrpConnection()
                 conn.connect(device.host, device.port)
@@ -122,8 +108,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     try {
                         val cipher = mrpPairingInit.pairVerify(creds)
                         conn.cipher = cipher
-                        _connectionState.value = ConnectionState.CONNECTED
-                        _statusMessage.value = "Connected to ${device.name}"
+                        establishRemoteSession(conn, device)
                         return@launch
                     } catch (e: Exception) {
                         Log.w(TAG, "Pair-verify failed: ${e.message}")
@@ -148,6 +133,16 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 _connectionState.value = ConnectionState.DISCONNECTED
             }
         }
+    }
+
+    private suspend fun establishRemoteSession(conn: MrpConnection, device: AppleTVDevice) {
+        _statusMessage.value = "Starting remote session..."
+        conn.sendMessage(ProtobufHelper.buildSetConnectionStateMessage())
+        pairing = null
+        pairingSalt = null
+        pairingServerPubKey = null
+        _connectionState.value = ConnectionState.CONNECTED
+        _statusMessage.value = "Connected to ${device.name}"
     }
 
     private suspend fun startPairing(mrpPairing: MrpPairing) {
@@ -211,11 +206,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 connection = newConn
 
                 val verifyPairing = MrpPairing(newConn)
+                verifyPairing.sendDeviceInfo()
                 val cipher = verifyPairing.pairVerify(creds)
                 newConn.cipher = cipher
 
-                _connectionState.value = ConnectionState.CONNECTED
-                _statusMessage.value = "Connected to ${device.name}"
+                establishRemoteSession(newConn, device)
             } catch (e: Exception) {
                 Log.e(TAG, "Pairing failed: ${e.message}", e)
                 _lastError.value = "Pairing failed: ${e.javaClass.simpleName}: ${e.message}"

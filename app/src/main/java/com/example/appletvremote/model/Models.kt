@@ -26,8 +26,8 @@ data class PairingCredentials(
 enum class RemoteButton(val usagePage: Int, val usage: Int) {
     UP(0x01, 0x8C),
     DOWN(0x01, 0x8D),
-    LEFT(0x01, 0x8E),
-    RIGHT(0x01, 0x8F),
+    LEFT(0x01, 0x8B),
+    RIGHT(0x01, 0x8A),
     SELECT(0x01, 0x89),
     MENU(0x01, 0x86),
     HOME(0x0C, 0x40),
@@ -36,7 +36,7 @@ enum class RemoteButton(val usagePage: Int, val usage: Int) {
     VOLUME_DOWN(0x0C, 0xEA),
     NEXT(0x0C, 0xB5),
     PREVIOUS(0x0C, 0xB6),
-    POWER(0x0C, 0x30)
+    POWER(0x01, 0x82)
 }
 
 enum class ConnectionState {

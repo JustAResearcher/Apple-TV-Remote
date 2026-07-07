@@ -1,6 +1,7 @@
 package com.example.appletvremote.protocol
 
 import java.io.ByteArrayOutputStream
+import java.util.UUID
 
 /**
  * Minimal protobuf encoder/decoder for MRP protocol messages.
@@ -61,6 +62,23 @@ object ProtobufHelper {
         return encodeBytesField(fieldNumber, value.toByteArray())
     }
 
+    private fun buildProtocolMessage(
+        messageType: Int,
+        extensionField: Int,
+        inner: ByteArray,
+        identifier: String? = null
+    ): ByteArray {
+        val outer = ByteArrayOutputStream()
+        outer.write(encodeVarintField(1, messageType.toLong()))
+        if (identifier != null) {
+            outer.write(encodeStringField(2, identifier))
+        }
+        outer.write(encodeVarintField(4, 0))
+        outer.write(encodeBytesField(extensionField, inner))
+        outer.write(encodeStringField(85, UUID.randomUUID().toString().uppercase()))
+        return outer.toByteArray()
+    }
+
     /**
      * CryptoPairingMessage (extension field 39):
      *   1 = pairingData (bytes)
@@ -77,10 +95,11 @@ object ProtobufHelper {
         inner.write(encodeBoolField(4, false))   // isUsingSystemPairing
         inner.write(encodeVarintField(5, if (isPairing) 2 else 0))
 
-        val outer = ByteArrayOutputStream()
-        outer.write(encodeVarintField(1, MSG_TYPE_CRYPTO_PAIRING.toLong()))
-        outer.write(encodeBytesField(EXT_CRYPTO_PAIRING, inner.toByteArray()))
-        return outer.toByteArray()
+        return buildProtocolMessage(
+            MSG_TYPE_CRYPTO_PAIRING,
+            EXT_CRYPTO_PAIRING,
+            inner.toByteArray()
+        )
     }
 
     /**
@@ -89,18 +108,24 @@ object ProtobufHelper {
      *   (no hidDescriptorID field — that was wrong)
      */
     fun buildSendHIDEventMessage(usagePage: Int, usage: Int, down: Boolean): ByteArray {
-        val hidData = ByteArray(44)
-        writeUint32LE(hidData, 4, usagePage)
-        writeUint32LE(hidData, 8, usage)
-        writeUint32LE(hidData, 12, if (down) 1 else 0)
+        val hidData = ByteArrayOutputStream()
+        hidData.write(hexToBytes("438922cf08020000"))
+        hidData.write(hexToBytes(
+            "0000000000000000010000000000000002000000200000000300000001000000000000"
+        ))
+        hidData.writeUint16BE(usagePage)
+        hidData.writeUint16BE(usage)
+        hidData.writeUint16BE(if (down) 1 else 0)
+        hidData.write(hexToBytes("0000000000000001000000"))
 
         val inner = ByteArrayOutputStream()
-        inner.write(encodeBytesField(1, hidData))
+        inner.write(encodeBytesField(1, hidData.toByteArray()))
 
-        val outer = ByteArrayOutputStream()
-        outer.write(encodeVarintField(1, MSG_TYPE_SEND_HID_EVENT.toLong()))
-        outer.write(encodeBytesField(EXT_SEND_HID_EVENT, inner.toByteArray()))
-        return outer.toByteArray()
+        return buildProtocolMessage(
+            MSG_TYPE_SEND_HID_EVENT,
+            EXT_SEND_HID_EVENT,
+            inner.toByteArray()
+        )
     }
 
     /**
@@ -144,10 +169,12 @@ object ProtobufHelper {
         inner.write(encodeVarintField(21, 1))    // deviceClass = iPhone
         inner.write(encodeVarintField(22, 1))    // logicalDeviceCount
 
-        val outer = ByteArrayOutputStream()
-        outer.write(encodeVarintField(1, MSG_TYPE_DEVICE_INFO.toLong()))
-        outer.write(encodeBytesField(EXT_DEVICE_INFO, inner.toByteArray()))
-        return outer.toByteArray()
+        return buildProtocolMessage(
+            MSG_TYPE_DEVICE_INFO,
+            EXT_DEVICE_INFO,
+            inner.toByteArray(),
+            UUID.randomUUID().toString().uppercase()
+        )
     }
 
     /**
@@ -158,10 +185,11 @@ object ProtobufHelper {
         val inner = ByteArrayOutputStream()
         inner.write(encodeVarintField(1, 2)) // Connected
 
-        val outer = ByteArrayOutputStream()
-        outer.write(encodeVarintField(1, MSG_TYPE_SET_STATE.toLong()))
-        outer.write(encodeBytesField(EXT_SET_CONNECTION_STATE, inner.toByteArray()))
-        return outer.toByteArray()
+        return buildProtocolMessage(
+            MSG_TYPE_SET_CONNECTION_STATE,
+            EXT_SET_CONNECTION_STATE,
+            inner.toByteArray()
+        )
     }
 
     fun parseMessage(data: ByteArray): Map<Int, Any> {
@@ -208,18 +236,22 @@ object ProtobufHelper {
         return result to offset
     }
 
-    private fun writeUint32LE(data: ByteArray, offset: Int, value: Int) {
-        data[offset] = (value and 0xFF).toByte()
-        data[offset + 1] = ((value shr 8) and 0xFF).toByte()
-        data[offset + 2] = ((value shr 16) and 0xFF).toByte()
-        data[offset + 3] = ((value shr 24) and 0xFF).toByte()
+    private fun ByteArrayOutputStream.writeUint16BE(value: Int) {
+        write((value shr 8) and 0xFF)
+        write(value and 0xFF)
+    }
+
+    private fun hexToBytes(hex: String): ByteArray {
+        require(hex.length % 2 == 0) { "Hex string must have an even length" }
+        return ByteArray(hex.length / 2) { index ->
+            hex.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+        }
     }
 
     // MRP message type constants
     const val MSG_TYPE_SEND_COMMAND = 1
-    const val MSG_TYPE_SEND_HID_EVENT = 6
+    const val MSG_TYPE_SEND_HID_EVENT = 8
     const val MSG_TYPE_DEVICE_INFO = 15
-    const val MSG_TYPE_CLIENT_UPDATES_CONFIG = 25
-    const val MSG_TYPE_CRYPTO_PAIRING = 51
-    const val MSG_TYPE_SET_STATE = 69
+    const val MSG_TYPE_CRYPTO_PAIRING = 34
+    const val MSG_TYPE_SET_CONNECTION_STATE = 38
 }

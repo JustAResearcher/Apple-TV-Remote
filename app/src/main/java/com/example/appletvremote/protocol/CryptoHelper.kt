@@ -1,37 +1,14 @@
 package com.example.appletvremote.protocol
 
-import android.util.Log
 import org.bouncycastle.crypto.agreement.X25519Agreement
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator
 import org.bouncycastle.crypto.generators.X25519KeyPairGenerator
+import org.bouncycastle.crypto.modes.ChaCha20Poly1305
 import org.bouncycastle.crypto.params.*
 import org.bouncycastle.crypto.signers.Ed25519Signer
-import org.bouncycastle.jce.provider.BouncyCastleProvider
-import java.security.Security
-import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
 object CryptoHelper {
-
-    private var initialized = false
-
-    /**
-     * Initialize BouncyCastle provider on demand, not at class load time.
-     * Must be called before any JCE crypto operations (ChaCha20-Poly1305).
-     */
-    fun ensureInitialized() {
-        if (initialized) return
-        initialized = true
-        try {
-            Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
-            Security.insertProviderAt(BouncyCastleProvider(), 1)
-            Log.d("CryptoHelper", "BouncyCastle provider installed")
-        } catch (e: Exception) {
-            Log.e("CryptoHelper", "Failed to install BouncyCastle: ${e.message}", e)
-        }
-    }
 
     // --- Ed25519 ---
 
@@ -94,19 +71,26 @@ object CryptoHelper {
     // --- ChaCha20-Poly1305 ---
 
     fun chaCha20Poly1305Encrypt(key: ByteArray, nonce: ByteArray, plaintext: ByteArray, aad: ByteArray? = null): ByteArray {
-        ensureInitialized()
-        val cipher = Cipher.getInstance("ChaCha20-Poly1305", "BC")
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "ChaCha20"), IvParameterSpec(nonce))
-        if (aad != null) cipher.updateAAD(aad)
-        return cipher.doFinal(plaintext)
+        return chaCha20Poly1305(true, key, nonce, plaintext, aad)
     }
 
     fun chaCha20Poly1305Decrypt(key: ByteArray, nonce: ByteArray, ciphertext: ByteArray, aad: ByteArray? = null): ByteArray {
-        ensureInitialized()
-        val cipher = Cipher.getInstance("ChaCha20-Poly1305", "BC")
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "ChaCha20"), IvParameterSpec(nonce))
-        if (aad != null) cipher.updateAAD(aad)
-        return cipher.doFinal(ciphertext)
+        return chaCha20Poly1305(false, key, nonce, ciphertext, aad)
+    }
+
+    private fun chaCha20Poly1305(
+        forEncryption: Boolean,
+        key: ByteArray,
+        nonce: ByteArray,
+        input: ByteArray,
+        aad: ByteArray?
+    ): ByteArray {
+        val cipher = ChaCha20Poly1305()
+        cipher.init(forEncryption, AEADParameters(KeyParameter(key), 128, nonce, aad))
+        val output = ByteArray(cipher.getOutputSize(input.size))
+        val processed = cipher.processBytes(input, 0, input.size, output, 0)
+        val finalSize = cipher.doFinal(output, processed)
+        return output.copyOf(processed + finalSize)
     }
 
     fun buildNonce(counter: Long): ByteArray {

@@ -22,4 +22,15 @@ class RemoteButtonTest {
         assertEquals(0x01, RemoteButton.POWER.usagePage)
         assertEquals(0x82, RemoteButton.POWER.usage)
     }
+
+    @Test
+    fun `common keys map to companion hid commands`() {
+        assertEquals(1, RemoteButton.UP.companionCommand)
+        assertEquals(2, RemoteButton.DOWN.companionCommand)
+        assertEquals(3, RemoteButton.LEFT.companionCommand)
+        assertEquals(4, RemoteButton.RIGHT.companionCommand)
+        assertEquals(5, RemoteButton.MENU.companionCommand)
+        assertEquals(6, RemoteButton.SELECT.companionCommand)
+        assertEquals(14, RemoteButton.PLAY_PAUSE.companionCommand)
+    }
 }

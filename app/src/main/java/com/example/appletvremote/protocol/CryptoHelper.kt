@@ -100,6 +100,14 @@ object CryptoHelper {
         }
         return nonce
     }
+
+    fun buildNonce12(counter: Long): ByteArray {
+        val nonce = ByteArray(12)
+        for (i in 0..7) {
+            nonce[i] = ((counter shr (i * 8)) and 0xFF).toByte()
+        }
+        return nonce
+    }
 }
 
 /**
@@ -119,5 +127,20 @@ class MrpCipher(private val outputKey: ByteArray, private val inputKey: ByteArra
     fun decrypt(data: ByteArray): ByteArray {
         val nonce = CryptoHelper.buildNonce(inCounter++)
         return CryptoHelper.chaCha20Poly1305Decrypt(inputKey, nonce, data)
+    }
+}
+
+class CompanionCipher(private val outputKey: ByteArray, private val inputKey: ByteArray) {
+    private var outCounter: Long = 0
+    private var inCounter: Long = 0
+
+    fun encrypt(data: ByteArray, aad: ByteArray): ByteArray {
+        val nonce = CryptoHelper.buildNonce12(outCounter++)
+        return CryptoHelper.chaCha20Poly1305Encrypt(outputKey, nonce, data, aad)
+    }
+
+    fun decrypt(data: ByteArray, aad: ByteArray): ByteArray {
+        val nonce = CryptoHelper.buildNonce12(inCounter++)
+        return CryptoHelper.chaCha20Poly1305Decrypt(inputKey, nonce, data, aad)
     }
 }

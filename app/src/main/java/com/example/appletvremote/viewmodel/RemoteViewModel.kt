@@ -6,6 +6,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.appletvremote.discovery.AppleTVDiscovery
 import com.example.appletvremote.model.*
+import com.example.appletvremote.protocol.CompanionConnection
+import com.example.appletvremote.protocol.CompanionRemote
 import com.example.appletvremote.protocol.MrpConnection
 import com.example.appletvremote.protocol.MrpPairing
 import com.example.appletvremote.protocol.ProtobufHelper
@@ -38,7 +40,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     val lastError: StateFlow<String> = _lastError
 
     private var connection: MrpConnection? = null
+    private var companionRemote: CompanionRemote? = null
     private var pairing: MrpPairing? = null
+    private var companionPairing: CompanionRemote? = null
     private var pairingSalt: ByteArray? = null
     private var pairingServerPubKey: ByteArray? = null
 
@@ -76,17 +80,23 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val device = AppleTVDevice(
             name = "Apple TV ($host)",
             host = host,
-            port = 49152,
-            uniqueId = host
+            port = 49153,
+            uniqueId = host,
+            protocol = AppleTVProtocol.COMPANION
         )
         _selectedDevice.value = device
         _lastError.value = ""
         _connectionState.value = ConnectionState.CONNECTING
-        _statusMessage.value = "Connecting to $host:49152..."
+        _statusMessage.value = "Connecting to $host:49153..."
         connectToDevice(device)
     }
 
     private fun connectToDevice(device: AppleTVDevice) {
+        if (device.protocol == AppleTVProtocol.COMPANION) {
+            connectCompanionDevice(device)
+            return
+        }
+
         viewModelScope.launch {
             try {
                 Log.d(TAG, "Connecting to ${device.host}:${device.port}")
@@ -128,11 +138,64 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 startPairing(mrpPairingInit)
             } catch (e: Exception) {
                 Log.e(TAG, "Connection failed: ${e.message}", e)
-                _lastError.value = "Failed to connect to ${device.host}:${device.port} — ${e.javaClass.simpleName}: ${e.message}"
+                _lastError.value = "Failed to connect to ${device.host}:${device.port} - ${e.javaClass.simpleName}: ${e.message}"
                 _statusMessage.value = ""
                 _connectionState.value = ConnectionState.DISCONNECTED
             }
         }
+    }
+
+    private fun connectCompanionDevice(device: AppleTVDevice) {
+        viewModelScope.launch {
+            try {
+                val remote = CompanionRemote(CompanionConnection())
+                remote.connect(device.host, device.port)
+                companionRemote = remote
+
+                val creds = credentialStore.load(device.uniqueId)
+                if (creds != null) {
+                    _connectionState.value = ConnectionState.PAIR_VERIFY
+                    _statusMessage.value = "Verifying existing Companion pairing..."
+                    try {
+                        remote.pairVerify(creds)
+                        remote.startRemoteSession(creds, device.uniqueId)
+                        establishCompanionSession(device)
+                        return@launch
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Companion pair-verify failed: ${e.message}")
+                        credentialStore.delete(device.uniqueId)
+                        remote.disconnect()
+                    }
+                }
+
+                val newRemote = CompanionRemote(CompanionConnection())
+                newRemote.connect(device.host, device.port)
+                companionRemote = newRemote
+                companionPairing = newRemote
+                _connectionState.value = ConnectionState.PAIRING
+                _statusMessage.value = "Requesting Companion pairing..."
+                val (salt, serverPubKey) = newRemote.startPairing()
+                pairingSalt = salt
+                pairingServerPubKey = serverPubKey
+                _needsPin.value = true
+                _statusMessage.value = "Enter the PIN shown on your Apple TV"
+            } catch (e: Exception) {
+                Log.e(TAG, "Companion connection failed: ${e.message}", e)
+                _lastError.value = "Failed to connect to ${device.name} (${device.host}:${device.port}) via Companion\n\n" +
+                        "${e.javaClass.simpleName}: ${e.message}"
+                _statusMessage.value = ""
+                _connectionState.value = ConnectionState.DISCONNECTED
+            }
+        }
+    }
+
+    private fun establishCompanionSession(device: AppleTVDevice) {
+        pairing = null
+        companionPairing = null
+        pairingSalt = null
+        pairingServerPubKey = null
+        _connectionState.value = ConnectionState.CONNECTED
+        _statusMessage.value = "Connected to ${device.name}"
     }
 
     private suspend fun establishRemoteSession(conn: MrpConnection, device: AppleTVDevice) {
@@ -179,6 +242,23 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         _needsPin.value = false
         viewModelScope.launch {
             try {
+                val device = _selectedDevice.value!!
+                if (device.protocol == AppleTVProtocol.COMPANION) {
+                    val remote = companionPairing ?: throw IllegalStateException("No active Companion pairing")
+                    val salt = pairingSalt ?: throw IllegalStateException("No salt")
+                    val serverPubKey = pairingServerPubKey ?: throw IllegalStateException("No server key")
+                    _statusMessage.value = "Finishing Companion pairing..."
+                    var creds = remote.finishPairing(pin, salt, serverPubKey)
+                    creds = creds.copy(deviceId = device.uniqueId)
+                    credentialStore.save(creds)
+                    _statusMessage.value = "Verifying Companion pairing..."
+                    remote.pairVerify(creds)
+                    remote.startRemoteSession(creds, device.uniqueId)
+                    companionRemote = remote
+                    establishCompanionSession(device)
+                    return@launch
+                }
+
                 val mrpPairing = pairing ?: throw IllegalStateException("No active pairing")
                 val salt = pairingSalt ?: throw IllegalStateException("No salt")
                 val serverPubKey = pairingServerPubKey ?: throw IllegalStateException("No server key")
@@ -193,7 +273,6 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 mrpPairing.pairSetupM5()
 
                 _statusMessage.value = "Receiving server credentials (M6)..."
-                val device = _selectedDevice.value!!
                 var creds = mrpPairing.pairSetupM6()
                 creds = creds.copy(deviceId = device.uniqueId)
 
@@ -221,11 +300,16 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun pressButton(button: RemoteButton) {
-        val conn = connection ?: return
         if (_connectionState.value != ConnectionState.CONNECTED) return
 
         viewModelScope.launch {
             try {
+                if (_selectedDevice.value?.protocol == AppleTVProtocol.COMPANION) {
+                    companionRemote?.pressButton(button)
+                    return@launch
+                }
+
+                val conn = connection ?: return@launch
                 val downMsg = ProtobufHelper.buildSendHIDEventMessage(
                     button.usagePage, button.usage, true
                 )
@@ -245,8 +329,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
     fun disconnect() {
         connection?.disconnect()
+        companionRemote?.disconnect()
         connection = null
+        companionRemote = null
         pairing = null
+        companionPairing = null
         _connectionState.value = ConnectionState.DISCONNECTED
         _selectedDevice.value = null
         _statusMessage.value = ""
@@ -257,5 +344,6 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         super.onCleared()
         discovery.stopDiscovery()
         connection?.disconnect()
+        companionRemote?.disconnect()
     }
 }

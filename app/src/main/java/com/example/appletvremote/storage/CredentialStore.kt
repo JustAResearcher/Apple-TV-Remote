@@ -28,6 +28,7 @@ class CredentialStore(private val context: Context) {
             put("clientPrivateKey", Base64.encodeToString(credentials.clientPrivateKey, Base64.NO_WRAP))
             put("clientPublicKey", Base64.encodeToString(credentials.clientPublicKey, Base64.NO_WRAP))
             put("peerPublicKey", Base64.encodeToString(credentials.peerPublicKey, Base64.NO_WRAP))
+            put("peerIdentifier", Base64.encodeToString(credentials.peerIdentifier, Base64.NO_WRAP))
         }
         context.dataStore.edit { prefs ->
             prefs[keyFor(credentials.deviceId)] = json.toString()
@@ -44,7 +45,12 @@ class CredentialStore(private val context: Context) {
                 clientId = json.getString("clientId"),
                 clientPrivateKey = Base64.decode(json.getString("clientPrivateKey"), Base64.NO_WRAP),
                 clientPublicKey = Base64.decode(json.getString("clientPublicKey"), Base64.NO_WRAP),
-                peerPublicKey = Base64.decode(json.getString("peerPublicKey"), Base64.NO_WRAP)
+                peerPublicKey = Base64.decode(json.getString("peerPublicKey"), Base64.NO_WRAP),
+                peerIdentifier = if (json.has("peerIdentifier")) {
+                    Base64.decode(json.getString("peerIdentifier"), Base64.NO_WRAP)
+                } else {
+                    ByteArray(0)
+                }
             )
         } catch (_: Exception) {
             null

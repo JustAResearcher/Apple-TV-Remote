@@ -43,9 +43,12 @@ class SrpClient {
 
     private lateinit var clientProof: ByteArray // M1
 
-    fun generateCredentials(): ByteArray {
-        // Generate random private key a
-        privateKey = BigInteger(256, random)
+    fun generateCredentials(privateSeed: ByteArray? = null): ByteArray {
+        privateKey = if (privateSeed != null) {
+            BigInteger(1, privateSeed)
+        } else {
+            BigInteger(256, random)
+        }
 
         // A = g^a mod N
         val A = g.modPow(privateKey, N)

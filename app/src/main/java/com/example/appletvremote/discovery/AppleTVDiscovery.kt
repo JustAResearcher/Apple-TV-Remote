@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
 import android.util.Log
 import com.example.appletvremote.model.AppleTVDevice
+import com.example.appletvremote.model.AppleTVProtocol
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,10 +22,10 @@ import javax.jmdns.ServiceListener
 class AppleTVDiscovery(private val context: Context) {
     companion object {
         private const val TAG = "AppleTVDiscovery"
-        // Apple TV advertises on both of these
+        // tvOS 26 advertises Companion; older devices may still advertise MRP.
         private val SERVICE_TYPES = arrayOf(
             "_mediaremotetv._tcp.local.",
-            "_airplay._tcp.local."
+            "_companion-link._tcp.local."
         )
     }
 
@@ -92,10 +93,9 @@ class AppleTVDiscovery(private val context: Context) {
                         val port = info.port
                         val name = info.name
 
-                        // Only use _mediaremotetv port; skip _airplay unless
-                        // it's the only way we found this device
-                        val isMRP = event.type.contains("mediaremotetv")
+                        val protocol = protocolFor(event.type)
                         val uniqueId = info.getPropertyString("UniqueIdentifier")
+                            ?: info.getPropertyString("rpmrtid")
                             ?: info.getPropertyString("deviceid")
                             ?: info.getPropertyString("MACAddress")
                             ?: "$host:$port"
@@ -105,14 +105,14 @@ class AppleTVDiscovery(private val context: Context) {
                         val device = AppleTVDevice(
                             name = name,
                             host = host,
-                            port = if (isMRP) port else 49152,
-                            uniqueId = uniqueId
+                            port = port,
+                            uniqueId = uniqueId,
+                            protocol = protocol
                         )
 
                         synchronized(deviceMap) {
-                            // Prefer MRP entry over airplay entry for same device
                             val existing = deviceMap[uniqueId]
-                            if (existing == null || isMRP) {
+                            if (existing == null || protocol == AppleTVProtocol.MRP) {
                                 deviceMap[uniqueId] = device
                                 _devices.value = deviceMap.values.toList()
                             }
@@ -140,8 +140,9 @@ class AppleTVDiscovery(private val context: Context) {
                                 val host = addresses[0].hostAddress ?: continue
                                 val port = info.port
                                 val name = info.name
-                                val isMRP = serviceType.contains("mediaremotetv")
+                                val protocol = protocolFor(serviceType)
                                 val uniqueId = info.getPropertyString("UniqueIdentifier")
+                                    ?: info.getPropertyString("rpmrtid")
                                     ?: info.getPropertyString("deviceid")
                                     ?: info.getPropertyString("MACAddress")
                                     ?: "$host:$port"
@@ -149,12 +150,13 @@ class AppleTVDiscovery(private val context: Context) {
                                 val device = AppleTVDevice(
                                     name = name,
                                     host = host,
-                                    port = if (isMRP) port else 49152,
-                                    uniqueId = uniqueId
+                                    port = port,
+                                    uniqueId = uniqueId,
+                                    protocol = protocol
                                 )
                                 synchronized(deviceMap) {
                                     val existing = deviceMap[uniqueId]
-                                    if (existing == null || isMRP) {
+                                    if (existing == null || protocol == AppleTVProtocol.MRP) {
                                         deviceMap[uniqueId] = device
                                         _devices.value = deviceMap.values.toList()
                                     }
@@ -224,5 +226,13 @@ class AppleTVDiscovery(private val context: Context) {
         }
 
         throw IllegalStateException("No active IPv4 address found for mDNS discovery")
+    }
+
+    private fun protocolFor(serviceType: String): AppleTVProtocol {
+        return if (serviceType.contains("companion-link")) {
+            AppleTVProtocol.COMPANION
+        } else {
+            AppleTVProtocol.MRP
+        }
     }
 }

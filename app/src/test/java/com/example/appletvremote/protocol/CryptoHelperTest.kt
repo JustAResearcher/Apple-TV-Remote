@@ -59,4 +59,28 @@ class CryptoHelperTest {
         )
         assertTrue(nonce.size == 12)
     }
+
+    @Test
+    fun `companion nonce is twelve byte little endian counter`() {
+        val nonce = CryptoHelper.buildNonce12(0x0102030405060708L)
+
+        assertArrayEquals(
+            byteArrayOf(
+                0x08,
+                0x07,
+                0x06,
+                0x05,
+                0x04,
+                0x03,
+                0x02,
+                0x01,
+                0x00,
+                0x00,
+                0x00,
+                0x00
+            ),
+            nonce
+        )
+        assertTrue(nonce.size == 12)
+    }
 }

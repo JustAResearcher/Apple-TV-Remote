@@ -19,6 +19,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.appletvremote.model.AppleTVDevice
+import com.example.appletvremote.model.AppleTVProtocol
 import com.example.appletvremote.model.ConnectionState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -251,8 +252,13 @@ private fun DeviceCard(device: AppleTVDevice, onClick: () -> Unit) {
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Medium
                 )
+                val protocolLabel = if (device.protocol == AppleTVProtocol.COMPANION) {
+                    "Companion"
+                } else {
+                    "MRP"
+                }
                 Text(
-                    text = "${device.host}:${device.port}",
+                    text = "$protocolLabel - ${device.host}:${device.port}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

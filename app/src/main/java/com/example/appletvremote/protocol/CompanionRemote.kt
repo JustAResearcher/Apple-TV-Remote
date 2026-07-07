@@ -2,6 +2,7 @@ package com.example.appletvremote.protocol
 
 import com.example.appletvremote.model.PairingCredentials
 import com.example.appletvremote.model.RemoteButton
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 class CompanionRemote(private val connection: CompanionConnection) {
@@ -10,6 +11,9 @@ class CompanionRemote(private val connection: CompanionConnection) {
         private const val SRP_SALT = ""
         private const val SRP_OUTPUT_INFO = "ClientEncrypt-main"
         private const val SRP_INPUT_INFO = "ServerEncrypt-main"
+        private const val MEDIA_CONTROL_GET_VOLUME = 5
+        private const val MEDIA_CONTROL_SET_VOLUME = 6
+        private const val VOLUME_STEP = 0.05
     }
 
     private val srp = SrpClient()
@@ -231,12 +235,55 @@ class CompanionRemote(private val connection: CompanionConnection) {
             sendRequest("TVRCSessionStart", linkedMapOf("ProtocolVersionKey" to "1.2"))
         } catch (_: Exception) {
         }
+        try {
+            sendEvent("_interest", linkedMapOf("_regEvents" to listOf("_iMC")))
+        } catch (_: Exception) {
+        }
     }
 
     suspend fun pressButton(button: RemoteButton) {
+        if (button == RemoteButton.VOLUME_UP || button == RemoteButton.VOLUME_DOWN) {
+            pressVolumeButton(button)
+            return
+        }
+
         val command = button.companionCommand ?: return
+        pressHidCommand(command)
+    }
+
+    private suspend fun pressVolumeButton(button: RemoteButton) {
+        val command = button.companionCommand ?: return
+        pressHidCommand(command)
+        tryMediaControlVolumeStep(button)
+    }
+
+    private suspend fun pressHidCommand(command: Int) {
         sendRequest("_hidC", linkedMapOf("_hBtS" to 1, "_hidC" to command))
+        delay(30)
         sendRequest("_hidC", linkedMapOf("_hBtS" to 2, "_hidC" to command))
+    }
+
+    private suspend fun tryMediaControlVolumeStep(button: RemoteButton) {
+        try {
+            val currentVolume = getMediaControlVolume() ?: return
+            val direction = if (button == RemoteButton.VOLUME_UP) 1 else -1
+            val nextVolume = (currentVolume + direction * VOLUME_STEP).coerceIn(0.0, 1.0)
+            sendMediaControl(MEDIA_CONTROL_SET_VOLUME, linkedMapOf("_vol" to nextVolume))
+        } catch (_: Exception) {
+        }
+    }
+
+    private suspend fun getMediaControlVolume(): Double? {
+        val response = sendMediaControl(MEDIA_CONTROL_GET_VOLUME)
+        val content = response["_c"] as? Map<*, *> ?: return null
+        return (content["_vol"] as? Number)?.toDouble()
+    }
+
+    private suspend fun sendMediaControl(
+        command: Int,
+        args: Map<String, Any?> = emptyMap()
+    ): Map<String, Any?> {
+        return sendRequest("_mcc", linkedMapOf("_mcc" to command, *args.toList().toTypedArray()))
     }
 
     private suspend fun exchangeAuth(
@@ -273,6 +320,18 @@ class CompanionRemote(private val connection: CompanionConnection) {
                 return response
             }
         }
+    }
+
+    private suspend fun sendEvent(identifier: String, content: Map<String, Any?>) {
+        sendOpack(
+            CompanionFrameType.E_OPACK,
+            linkedMapOf(
+                "_i" to identifier,
+                "_t" to 1,
+                "_c" to content,
+                "_x" to xid++
+            )
+        )
     }
 
     private suspend fun sendOpack(type: CompanionFrameType, data: Map<String, Any?>) {

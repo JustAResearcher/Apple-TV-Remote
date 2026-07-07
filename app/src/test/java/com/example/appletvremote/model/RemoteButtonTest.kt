@@ -32,5 +32,7 @@ class RemoteButtonTest {
         assertEquals(5, RemoteButton.MENU.companionCommand)
         assertEquals(6, RemoteButton.SELECT.companionCommand)
         assertEquals(14, RemoteButton.PLAY_PAUSE.companionCommand)
+        assertEquals(8, RemoteButton.VOLUME_UP.companionCommand)
+        assertEquals(9, RemoteButton.VOLUME_DOWN.companionCommand)
     }
 }

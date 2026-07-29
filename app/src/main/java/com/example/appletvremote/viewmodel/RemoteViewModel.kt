@@ -15,6 +15,7 @@ import com.example.appletvremote.storage.CredentialStore
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.io.IOException
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
@@ -118,12 +119,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     try {
                         val cipher = mrpPairingInit.pairVerify(creds)
                         conn.cipher = cipher
-                        establishRemoteSession(conn, device)
-                        return@launch
                     } catch (e: Exception) {
                         Log.w(TAG, "Pair-verify failed: ${e.message}")
-                        credentialStore.delete(device.uniqueId)
                         conn.disconnect()
+                        if (e is CancellationException || e.isConnectionFailure()) throw e
                         val newConn = MrpConnection()
                         newConn.connect(device.host, device.port)
                         connection = newConn
@@ -133,6 +132,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         startPairing(newPairing)
                         return@launch
                     }
+                    establishRemoteSession(conn, device)
+                    return@launch
                 }
 
                 startPairing(mrpPairingInit)
@@ -158,27 +159,20 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     _statusMessage.value = "Verifying existing Companion pairing..."
                     try {
                         remote.pairVerify(creds)
-                        remote.startRemoteSession(creds, device.uniqueId)
-                        establishCompanionSession(device)
-                        return@launch
                     } catch (e: Exception) {
                         Log.w(TAG, "Companion pair-verify failed: ${e.message}")
-                        credentialStore.delete(device.uniqueId)
                         remote.disconnect()
+                        if (e is CancellationException || e.isConnectionFailure()) throw e
+                        startCompanionPairing(device)
+                        return@launch
                     }
+                    remote.startRemoteSession(creds, device.uniqueId)
+                    establishCompanionSession(device)
+                    return@launch
                 }
 
-                val newRemote = CompanionRemote(CompanionConnection())
-                newRemote.connect(device.host, device.port)
-                companionRemote = newRemote
-                companionPairing = newRemote
-                _connectionState.value = ConnectionState.PAIRING
-                _statusMessage.value = "Requesting Companion pairing..."
-                val (salt, serverPubKey) = newRemote.startPairing()
-                pairingSalt = salt
-                pairingServerPubKey = serverPubKey
-                _needsPin.value = true
-                _statusMessage.value = "Enter the PIN shown on your Apple TV"
+                remote.disconnect()
+                startCompanionPairing(device)
             } catch (e: Exception) {
                 Log.e(TAG, "Companion connection failed: ${e.message}", e)
                 _lastError.value = "Failed to connect to ${device.name} (${device.host}:${device.port}) via Companion\n\n" +
@@ -187,6 +181,20 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 _connectionState.value = ConnectionState.DISCONNECTED
             }
         }
+    }
+
+    private suspend fun startCompanionPairing(device: AppleTVDevice) {
+        val remote = CompanionRemote(CompanionConnection())
+        remote.connect(device.host, device.port)
+        companionRemote = remote
+        companionPairing = remote
+        _connectionState.value = ConnectionState.PAIRING
+        _statusMessage.value = "Requesting Companion pairing..."
+        val (salt, serverPubKey) = remote.startPairing()
+        pairingSalt = salt
+        pairingServerPubKey = serverPubKey
+        _needsPin.value = true
+        _statusMessage.value = "Enter the PIN shown on your Apple TV"
     }
 
     private fun establishCompanionSession(device: AppleTVDevice) {
@@ -345,5 +353,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         discovery.stopDiscovery()
         connection?.disconnect()
         companionRemote?.disconnect()
+    }
+
+    private fun Throwable.isConnectionFailure(): Boolean {
+        return generateSequence(this) { it.cause }.any { it is IOException }
     }
 }

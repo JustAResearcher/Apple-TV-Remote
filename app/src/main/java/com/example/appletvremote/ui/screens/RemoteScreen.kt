@@ -2,6 +2,7 @@ package com.example.appletvremote.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,10 +16,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.appletvremote.model.RemoteButton
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,8 +74,8 @@ fun RemoteScreen(
                 )
             }
 
-            // D-Pad with Select button
-            DPad(onButton = onButton)
+            // Touchpad: swipe to navigate, tap to select
+            Touchpad(onButton = onButton)
 
             // Playback controls
             Row(
@@ -124,105 +129,61 @@ fun RemoteScreen(
 }
 
 @Composable
-private fun DPad(onButton: (RemoteButton) -> Unit) {
+private fun Touchpad(onButton: (RemoteButton) -> Unit) {
+    val swipeThreshold = with(LocalDensity.current) { 40.dp.toPx() }
+
     Box(
-        modifier = Modifier.size(260.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(260.dp)
+            .clip(RoundedCornerShape(32.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .pointerInput(swipeThreshold) {
+                var totalDrag = Offset.Zero
+                detectDragGestures(
+                    onDragStart = { totalDrag = Offset.Zero },
+                    onDragEnd = {
+                        val button = when {
+                            abs(totalDrag.x) < swipeThreshold &&
+                                abs(totalDrag.y) < swipeThreshold -> null
+                            abs(totalDrag.x) > abs(totalDrag.y) ->
+                                if (totalDrag.x > 0) RemoteButton.RIGHT else RemoteButton.LEFT
+                            else ->
+                                if (totalDrag.y > 0) RemoteButton.DOWN else RemoteButton.UP
+                        }
+                        button?.let(onButton)
+                        totalDrag = Offset.Zero
+                    },
+                    onDragCancel = { totalDrag = Offset.Zero },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDrag += dragAmount
+                    }
+                )
+            }
+            .clickable { onButton(RemoteButton.SELECT) },
         contentAlignment = Alignment.Center
     ) {
-        // Background circle
-        Box(
-            modifier = Modifier
-                .size(260.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-        )
-
-        // Up
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = 10.dp)
-                .size(80.dp, 70.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { onButton(RemoteButton.UP) },
-            contentAlignment = Alignment.Center
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Icon(
-                Icons.Default.KeyboardArrowUp,
-                contentDescription = "Up",
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                Icons.Default.TouchApp,
+                contentDescription = null,
+                modifier = Modifier.size(40.dp),
+                tint = MaterialTheme.colorScheme.primary
             )
-        }
-
-        // Down
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .offset(y = (-10).dp)
-                .size(80.dp, 70.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { onButton(RemoteButton.DOWN) },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Default.KeyboardArrowDown,
-                contentDescription = "Down",
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        // Left
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .offset(x = 10.dp)
-                .size(70.dp, 80.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { onButton(RemoteButton.LEFT) },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Default.KeyboardArrowLeft,
-                contentDescription = "Left",
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        // Right
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .offset(x = (-10).dp)
-                .size(70.dp, 80.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { onButton(RemoteButton.RIGHT) },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Default.KeyboardArrowRight,
-                contentDescription = "Right",
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        // Select (center)
-        Box(
-            modifier = Modifier
-                .size(90.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                .clickable { onButton(RemoteButton.SELECT) },
-            contentAlignment = Alignment.Center
-        ) {
             Text(
-                "OK",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
+                "Touchpad",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "Swipe to navigate  •  Tap to select",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )
         }
     }

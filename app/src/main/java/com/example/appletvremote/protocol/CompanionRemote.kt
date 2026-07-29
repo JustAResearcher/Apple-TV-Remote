@@ -14,6 +14,10 @@ class CompanionRemote(private val connection: CompanionConnection) {
         private const val MEDIA_CONTROL_GET_VOLUME = 5
         private const val MEDIA_CONTROL_SET_VOLUME = 6
         private const val VOLUME_STEP = 0.05
+
+        internal fun rapportIdentifier(clientId: String): String {
+            return clientId.replace("-", "").lowercase().take(12)
+        }
     }
 
     private val srp = SrpClient()
@@ -213,7 +217,7 @@ class CompanionRemote(private val connection: CompanionConnection) {
                 "_bf" to 0,
                 "_cf" to 512,
                 "_clFl" to 128,
-                "_i" to deviceId.replace("-", "").lowercase(),
+                "_i" to rapportIdentifier(credentials.clientId),
                 "_idsID" to credentials.clientId.toByteArray(),
                 "_pubID" to deviceId,
                 "_sf" to 256,
